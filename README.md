@@ -1,61 +1,331 @@
 # Fourier Neural Operator for Astrophysical Gas Dynamics
 
-This project implements a 3D Fourier Neural Operator (FNO) for solving time-dependent partial differential equations in astrophysical gas dynamics simulations. The model learns operator mappings from initial conditions to future states for various physical quantities.
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
+
+This project implements a 3D Fourier Neural Operator (FNO) for solving time-dependent partial differential equations in astrophysical gas dynamics simulations. The model learns operator mappings from initial conditions (first 10 timesteps) to future states (next 10 timesteps) for various physical quantities in magnetohydrodynamic (MHD) simulations.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Model Architecture](#model-architecture)
+- [Usage](#usage)
+- [Physical Parameters](#physical-parameters)
+- [Training Details](#training-details)
+- [Data Format](#data-format)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Results](#results)
+- [Troubleshooting](#troubleshooting)
+- [References](#references)
 
 ## Overview
 
-The Fourier Neural Operator (FNO) is a deep learning approach that learns the mapping between input and output functions of PDEs directly in the frequency domain. This implementation handles 3D gas dynamics simulations with time evolution.
+The Fourier Neural Operator (FNO) is a deep learning architecture that learns mappings between infinite-dimensional function spaces. Unlike traditional neural networks that learn point-wise mappings, FNOs learn entire operator mappings, making them particularly effective for solving PDEs.
+
+This implementation:
+- Operates on 3D spatial grids (128×128) with temporal evolution (10 timesteps)
+- Learns in the frequency domain using Fast Fourier Transforms
+- Predicts future states of astrophysical gas dynamics from initial conditions
+- Supports multiple physical quantities (gas density, velocity components, magnetic fields)
+
+## Installation
+
+### Requirements
+
+- Python 3.8 or higher
+- CUDA-capable GPU (required for training)
+- 8GB+ GPU memory recommended
+
+### Setup
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd fno
+
+# Install dependencies
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install numpy matplotlib scipy
+
+# Verify PyTorch CUDA availability
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
 
 ## Model Architecture
 
-- **FNO3d Model**: A 3D Fourier neural operator with 5 spectral layers
-- **SpectralConv3d**: Performs FFT → complex multiplication in frequency domain → inverse FFT
-- **Input**: First 10 timesteps of solution + 3 spatial coordinates (u(1, x, y), ..., u(10, x, y), x, y, t)
-- **Output**: Next 40 timesteps prediction
-- **Features**: Uses 64 modes in x/y directions, 5 modes in time, width=30
+### FNO3d Overview
 
-## Key Components
+The model consists of:
+- **Input layer**: Linear projection from 10 channels (7 physical + 3 spatial coordinates) to hidden width
+- **5 Fourier layers**: Each combines spectral convolution with skip connection
+- **Output layers**: Two fully-connected layers projecting back to physical space
 
-- `architecture.py`: FNO3d model definition
-- `teste2.py`: Training script with 10,000 epochs 
-- `inference.py`: Inference script for testing
-- `utilities3.py`: Loss functions and utilities (LpLoss, HsLoss, etc.)
-- `Adam.py`: Custom Adam optimizer
+### Architecture Details
+
+```
+Input: (batch, 128, 128, 10, 7)  → 128×128 spatial grid, 10 timesteps, 7 channels
+  ↓ [Add grid coordinates]
+  ↓ (batch, 128, 128, 10, 10)
+  ↓ [Linear projection + permute]
+  ↓ [Fourier Layer 0-4 with GELU activation]
+Output: (batch, 128, 128, 10, 1) → Next 10 timesteps prediction
+```
+
+**Key hyperparameters:**
+- Fourier modes: 64 (x-direction), 64 (y-direction), 5 (time)
+- Hidden width: 30
+- Temporal padding: 6 (for non-periodic boundary conditions)
+- Activation: GELU
+
+### SpectralConv3d
+
+Performs operations in Fourier space:
+1. **FFT**: Transform to frequency domain using `torch.fft.rfftn`
+2. **Complex multiplication**: Learned weights multiply Fourier coefficients
+3. **Inverse FFT**: Transform back to physical space using `torch.fft.irfftn`
+4. **Parallel path**: 1×1×1 convolution acts as skip connection
 
 ## Usage
 
-### Training
+### Training a Model
+
 ```bash
 python teste2.py --param <parameter_name>
 ```
-Available parameters: `gasdens`, `gasvy`, `gasvz`, `by`, `bz`, `br`
 
-### Inference
+**Available parameters:**
+- `gasdens` - Gas density
+- `gasvy` - Gas velocity (y-component)
+- `gasvz` - Gas velocity (z-component)
+- `by` - Magnetic field (y-component)
+- `bz` - Magnetic field (z-component)
+- `br` - Magnetic field (radial component)
+
+**Example:**
+```bash
+python teste2.py --param gasdens
+```
+
+**Training configuration:**
+- Epochs: 10,000
+- Batch size: 4
+- Optimizer: Custom Adam with weight_decay=1e-4
+- Learning rate: 0.001 with StepLR scheduler (step_size=100, gamma=0.5)
+- Loss: Combined MAE (L1) + Relative L2 loss
+
+**Output:**
+- Model checkpoints: `Results/<param>/model/model_64_30.pt`
+- Loss history: `Results/<param>/model/loss_64_30.npy`
+- Validation images: `Results/<param>/predictions_image/` (generated once per epoch)
+
+### Running Inference
+
 ```bash
 python inference.py --param <parameter_name>
 ```
 
-## Requirements
+Processes 21 test samples and generates prediction visualizations comparing ground truth vs. predictions.
 
-- Python 3.8+
-- PyTorch 1.10+
-- numpy, matplotlib, scipy
+**Example:**
+```bash
+python inference.py --param gasdens
+```
+
+## Physical Parameters
+
+This model supports various physical quantities from MHD simulations:
+
+| Parameter | Description | Physical Quantity |
+|-----------|-------------|-------------------|
+| `gasdens` | Gas density | ρ (mass per unit volume) |
+| `gasvy` | Gas velocity Y | v_y component of velocity field |
+| `gasvz` | Gas velocity Z | v_z component of velocity field |
+| `by` | Magnetic field Y | B_y component of magnetic field |
+| `bz` | Magnetic field Z | B_z component of magnetic field |
+| `br` | Magnetic field radial | B_r radial component |
+
+## Training Details
+
+### Loss Functions
+
+The model uses a composite loss (defined in `utilities3.py`):
+
+1. **MAE Loss (L1)**: Mean absolute error on normalized predictions
+   ```python
+   mae = |prediction - target|
+   ```
+
+2. **Relative L2 Loss (LpLoss)**: Normalized error in L2 norm
+   ```python
+   l2 = ||prediction - target||_2 / ||target||_2
+   ```
+
+3. **Combined Loss**:
+   ```python
+   loss = mae + l2
+   ```
+
+### Normalization
+
+**Critical**: Input features and targets are normalized separately:
+
+- **Input (x)**: Min-max normalized to [-1, 1] (except last 2 spatial coordinate channels)
+- **Target (y)**: Min-max normalized to [-1, 1] during training
+- **Predictions**: Denormalized using original target statistics for loss computation
+
+### Data Loading
+
+- **Online loading**: Loads one batch file at a time to manage memory
+- **Training samples**: 90 files
+- **Test samples**: 21 files
+- **Batch size**: 4
 
 ## Data Format
 
-- Training data: `/home/roberta/DL_new/FNO/Data/<param>/train/[x|y]_<idx>.npy`
-- Test data: `/home/roberta/DL_new/FNO/Data/<param>/test/[x|y]_<idx>.npy`
-- Each file contains numpy arrays with shape `(20, 128, 128, 10, [7|1])`
+### Directory Structure
+
+```
+/home/roberta/DL_new/FNO/Data/
+├── gasdens/
+│   ├── train/
+│   │   ├── x_0.npy  # Input: first 10 timesteps
+│   │   ├── y_0.npy  # Target: next 10 timesteps
+│   │   ├── x_1.npy
+│   │   ├── y_1.npy
+│   │   └── ...
+│   └── test/
+│       ├── x_0.npy
+│       ├── y_0.npy
+│       └── ...
+├── gasvy/
+├── gasvz/
+└── ...
+```
+
+### Array Shapes
+
+- **Input files (x_*.npy)**: `(20, 128, 128, 10, 7)`
+  - 20 samples per file
+  - 128×128 spatial resolution
+  - 10 timesteps
+  - 7 physical channels
+
+- **Target files (y_*.npy)**: `(20, 128, 128, 10, 1)`
+  - 20 samples per file
+  - 128×128 spatial resolution
+  - 10 future timesteps
+  - 1 predicted channel
+
+## Configuration
+
+### Updating Data Paths
+
+All data paths are currently hardcoded. To adapt to your environment, update the following locations:
+
+1. **Training script** (`teste2.py`):
+   ```python
+   # Line ~184: data() function
+   dir = f'/your/path/Data/{param}/train/'
+
+   # Line ~216: unormalize() function
+   dir = f'/your/path/Data/{param}/test/'
+   ```
+
+2. **Inference script** (`inference.py`):
+   ```python
+   # Lines ~27, 36, 39: Update base paths
+   dir = f'/your/path/Data/{param}/test/'
+   ```
+
+### Model Hyperparameters
+
+To modify model architecture, edit the instantiation in `teste2.py`:
+
+```python
+model = FNO3d(modes1=64, modes2=64, modes3=5, width=30).cuda()
+```
+
+- `modes1`, `modes2`: Number of Fourier modes in x, y directions
+- `modes3`: Number of Fourier modes in time dimension
+- `width`: Hidden layer width
+
+## Project Structure
+
+```
+fno/
+├── architecture.py      # FNO3d and SpectralConv3d model definitions
+├── teste2.py           # Main training script
+├── inference.py        # Inference and visualization script
+├── utilities3.py       # Loss functions (LpLoss, HsLoss, FrequencyLoss)
+├── Adam.py            # Custom Adam optimizer implementation
+├── Results/           # Output directory (created automatically)
+│   └── <param>/
+│       ├── model/              # Model checkpoints and loss history
+│       └── predictions_image/  # Validation/test visualizations
+└── README.md
+```
 
 ## Results
 
-- Models saved to: `Results/<param>/model/`
-- Predictions saved to: `Results/<param>/predictions_image/`
+### Output Files
 
-## Note
+After training, results are organized as:
 
-All paths are hardcoded. Update path constants in `teste2.py` and `inference.py` when adapting to a different environment.
+```
+Results/
+└── <param>/
+    ├── model/
+    │   ├── model_64_30.pt      # Trained model state dict
+    │   └── loss_64_30.npy      # Training history (alternating MAE and combined loss)
+    └── predictions_image/
+        ├── prediction_0.png     # Visualization of test sample 0
+        ├── prediction_1.png
+        └── ...
+```
 
-## Acknowledgements
+### Visualization
 
-Based on research in Fourier Neural Operators for PDE solving in astrophysical simulations.
+Prediction images show:
+- Side-by-side comparison of ground truth vs. predicted timesteps
+- Generated for validation samples during training (1 per epoch)
+- Generated for all 21 test samples during inference
+
+## Troubleshooting
+
+### Common Issues
+
+**CUDA out of memory:**
+- Reduce batch size in `teste2.py` (line ~228: `data(idx, param, batch=4)`)
+- Use a smaller model width or fewer Fourier modes
+
+**File not found errors:**
+- Verify data paths are correctly updated (see [Configuration](#configuration))
+- Ensure data files follow the expected naming convention: `x_<idx>.npy`, `y_<idx>.npy`
+
+**Model not converging:**
+- Check data normalization is applied correctly
+- Verify input data quality and range
+- Try adjusting learning rate or scheduler parameters
+
+**Import errors:**
+- Ensure PyTorch is installed with CUDA support: `torch.cuda.is_available()` should return `True`
+- Install missing dependencies: `pip install numpy matplotlib scipy`
+
+### Debugging Tips
+
+- Monitor loss values in `Results/<param>/model/loss_64_30.npy`
+- Check validation images during training to verify model is learning
+- Use smaller epoch counts for initial testing (modify line ~227 in `teste2.py`)
+
+## References
+
+This implementation is based on the Fourier Neural Operator framework for learning mappings between function spaces. For more information on FNOs and their application to PDEs:
+
+- Li, Z., et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." *arXiv:2010.08895*
+- FNO applications to fluid dynamics and astrophysical simulations
+
+---
+
+**Note**: This is a research implementation for astrophysical MHD simulations. For production use, consider implementing proper configuration management, logging, and checkpointing strategies.
