@@ -321,12 +321,11 @@ Prediction images show:
 
 ## References
 
-Paper reporting the MHD application:  
-Duarte, Nemmen & Lima (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
+- Paper reporting the MHD application: Duarte, Nemmen & Lima (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
+- For more information on FNOs and their application to PDEs: Li et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
 
-For more information on FNOs and their application to PDEs:  
-Li et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
+## TODO
 
----
-
-**Note**: This is a research implementation for astrophysical MHD simulations. 
+- [ ] include figures and guide for prediction
+- [ ] serve the model somewhere
+- [ ] reproducibility: include Docker container
