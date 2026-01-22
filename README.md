@@ -1,4 +1,4 @@
-# Fourier Neural Operator for Astrophysical Gas Dynamics
+# Fourier Neural Operator for Magnetized Plasmas
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
@@ -321,11 +321,12 @@ Prediction images show:
 
 ## References
 
-This implementation is based on the Fourier Neural Operator framework for learning mappings between function spaces. For more information on FNOs and their application to PDEs:
+Paper reporting the MHD application:  
+Duarte, Nemmen & Lima (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 
-- Li, Z., et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." *arXiv:2010.08895*
-- FNO applications to fluid dynamics and astrophysical simulations
+For more information on FNOs and their application to PDEs:  
+Li et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
 
 ---
 
-**Note**: This is a research implementation for astrophysical MHD simulations. For production use, consider implementing proper configuration management, logging, and checkpointing strategies.
+**Note**: This is a research implementation for astrophysical MHD simulations. 
