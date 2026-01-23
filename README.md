@@ -3,26 +3,13 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
 
-This project implements a 3D Fourier Neural Operator (FNO) for solving time-dependent partial differential equations in astrophysical gas dynamics simulations. The model learns operator mappings from initial conditions (first 10 timesteps) to future states (next 10 timesteps) for various physical quantities in magnetohydrodynamic (MHD) simulations.
+This project implements a 3D Fourier Neural Operator (FNO) for solving time-dependent partial differential equations in astrophysical magnetohydrodynamic simulations. The model learns operator mappings from initial conditions to future states (next 10 timesteps) for various physical quantities in MHD simulations.
 
-<div class="alert alert-block alert-warning">
-    We are working...
-</div>
+---
+**REPOSITORY UNDER CONSTRUCTION**  
+We are working to make this repository useful and inference-ready, including a Docker image. For the time being, check out our paper: *Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [arXiv:2507.01388](https://arxiv.org/abs/2507.01388)*.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Installation](#installation)
-- [Model Architecture](#model-architecture)
-- [Usage](#usage)
-- [Physical Parameters](#physical-parameters)
-- [Training Details](#training-details)
-- [Data Format](#data-format)
-- [Configuration](#configuration)
-- [Project Structure](#project-structure)
-- [Results](#results)
-- [Troubleshooting](#troubleshooting)
-- [References](#references)
+---
 
 ## Overview
 
@@ -328,8 +315,12 @@ Prediction images show:
 - Paper reporting the MHD application: Duarte, Nemmen & Lima (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 - For more information on FNOs and their application to PDEs: Li et al. (2020). "Fourier Neural Operator for Parametric Partial Differential Equations." [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
 
+---
+
 ## TODO
 
-- [ ] include figures and guide for prediction
-- [ ] serve the model somewhere
-- [ ] reproducibility: include Docker container
+- [x] make repo public
+- [ ] figures and movie! 
+- [ ] inference guide w/ test dataset
+- [ ] serve the model w/ API
+- [ ] reproducibility: include Docker image
