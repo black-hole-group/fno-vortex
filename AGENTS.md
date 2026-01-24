@@ -9,7 +9,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 - Install dependencies: `pip install torch numpy matplotlib scipy`
 
 ### Build Commands
-- Training: `python src/teste2.py --param <parameter_name>`
+- Training: `python src/train.py --param <parameter_name>`
   - Available parameters: `gasdens`, `gasvy`, `gasvz`, `by`, `bz`, `br`
 - Inference: `python src/inference.py --param <parameter_name>`
 
@@ -21,7 +21,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 - No specific test framework found
 - Training and inference files can be run directly
 - To run a single test: `python src/inference.py --param gasdens`
-- For training a specific parameter: `python src/teste2.py --param gasdens`
+- For training a specific parameter: `python src/train.py --param gasdens`
 
 ## Code Style Guidelines
 
@@ -56,7 +56,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 
 ### Code Structure
 - Model definitions in `src/architecture.py`
-- Training logic in `src/teste2.py`
+- Training logic in `src/train.py`
 - Inference logic in `src/inference.py`
 - Utility functions in `src/utilities3.py`
 - Custom optimizer in `src/Adam.py`
@@ -67,7 +67,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 - Code is documented in CLAUDE.md file for better understanding
 
 ### Path Conventions
-- All hardcoded paths in `src/teste2.py` and `src/inference.py`
+- All hardcoded paths in `src/train.py` and `src/inference.py`
 - Data paths in `/home/roberta/DL_new/FNO/Data/`
 - Results paths in `/home/roberta/DL_new/FNO/Results/`
 - Paths should be updated when adapting code for different environments
