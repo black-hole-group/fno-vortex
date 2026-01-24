@@ -87,16 +87,16 @@ python teste2.py --param <parameter_name>
 ```
 
 **Available parameters:**
-- `gasdens` - Gas density
-- `gasvy` - Gas velocity (y-component)
-- `gasvz` - Gas velocity (z-component)
+- `density` - Gas density
+- `vy` - Gas velocity (y-component)
+- `vz` - Gas velocity (z-component)
 - `by` - Magnetic field (y-component)
 - `bz` - Magnetic field (z-component)
 - `br` - Magnetic field (radial component)
 
 **Example:**
 ```bash
-python teste2.py --param gasdens
+python teste2.py --param density
 ```
 
 **Training configuration:**
@@ -107,9 +107,9 @@ python teste2.py --param gasdens
 - Loss: Combined MAE (L1) + Relative L2 loss
 
 **Output:**
-- Model checkpoints: `Results/<param>/model/model_64_30.pt`
-- Loss history: `Results/<param>/model/loss_64_30.npy`
-- Validation images: `Results/<param>/predictions_image/` (generated once per epoch)
+- Model checkpoints: `experiments/<param>/checkpoints/model_64_30.pt`
+- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
+- Validation images: `experiments/<param>/visualizations/` (generated once per epoch)
 
 ### Running Inference
 
@@ -121,7 +121,7 @@ Processes 21 test samples and generates prediction visualizations comparing grou
 
 **Example:**
 ```bash
-python inference.py --param gasdens
+python inference.py --param density
 ```
 
 ## Physical Parameters
@@ -130,9 +130,9 @@ This model supports various physical quantities from MHD simulations:
 
 | Parameter | Description | Physical Quantity |
 |-----------|-------------|-------------------|
-| `gasdens` | Gas density | ρ (mass per unit volume) |
-| `gasvy` | Gas velocity Y | v_y component of velocity field |
-| `gasvz` | Gas velocity Z | v_z component of velocity field |
+| `density` | Gas density | ρ (mass per unit volume) |
+| `vy` | Gas velocity Y | v_y component of velocity field |
+| `vz` | Gas velocity Z | v_z component of velocity field |
 | `by` | Magnetic field Y | B_y component of magnetic field |
 | `bz` | Magnetic field Z | B_z component of magnetic field |
 | `br` | Magnetic field radial | B_r radial component |
@@ -177,6 +177,27 @@ The model uses a composite loss (defined in `utilities3.py`):
 
 ### Directory Structure
 
+```
+input_data/
+├── density/
+│   ├── train/
+│   │   ├── x_0.npy  # Input: first 10 timesteps
+│   │   ├── y_0.npy  # Target: next 10 timesteps
+│   │   ├── x_1.npy
+│   │   ├── y_1.npy
+│   │   └── ...
+│   └── test/
+│       ├── x_0.npy
+│       ├── y_0.npy
+│       └── ...
+├── vy/
+├── vz/
+└── ...
+
+experiments/
+└── <param>/
+    ├── checkpoints/              # Model checkpoints and loss history
+    └── visualizations/  # Validation/test visualizations
 ```
 /home/roberta/DL_new/FNO/Data/
 ├── gasdens/
@@ -251,11 +272,14 @@ fno/
 ├── inference.py        # Inference and visualization script
 ├── utilities3.py       # Loss functions (LpLoss, HsLoss, FrequencyLoss)
 ├── Adam.py            # Custom Adam optimizer implementation
-├── Results/           # Output directory (created automatically)
+├── input_data/        # Input data directory (created automatically)
 │   └── <param>/
-│       ├── model/              # Model checkpoints and loss history
-│       └── predictions_image/  # Validation/test visualizations
-└── README.md
+│       ├── train/              # Training data  
+│       └── test/               # Test data
+└── experiments/       # Output directory (created automatically)
+    └── <param>/
+        ├── checkpoints/        # Model checkpoints and loss history
+        └── visualizations/     # Validation/test visualizations
 ```
 
 ## Results
@@ -265,12 +289,12 @@ fno/
 After training, results are organized as:
 
 ```
-Results/
+experiments/
 └── <param>/
-    ├── model/
+    ├── checkpoints/
     │   ├── model_64_30.pt      # Trained model state dict
     │   └── loss_64_30.npy      # Training history (alternating MAE and combined loss)
-    └── predictions_image/
+    └── visualizations/
         ├── prediction_0.png     # Visualization of test sample 0
         ├── prediction_1.png
         └── ...
@@ -306,7 +330,7 @@ Prediction images show:
 
 ### Debugging Tips
 
-- Monitor loss values in `Results/<param>/model/loss_64_30.npy`
+- Monitor loss values in `experiments/<param>/checkpoints/loss_64_30.npy`
 - Check validation images during training to verify model is learning
 - Use smaller epoch counts for initial testing (modify line ~227 in `teste2.py`)
 

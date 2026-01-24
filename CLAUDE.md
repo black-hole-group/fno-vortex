@@ -12,19 +12,19 @@ This is a PyTorch implementation of a 3D Fourier Neural Operator (FNO) for solvi
 ```bash
 python src/teste2.py --param <parameter_name>
 ```
-- Available parameters: `gasdens`, `gasvy`, `gasvz`, `by`, `bz`, `br`
+- Available parameters: `density`, `vy`, `vz`, `by`, `bz`, `br`
 - Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling
-- Saves model checkpoints and loss history to `Results/<param>/model/`
-- Generates validation visualizations in `Results/<param>/predictions_image/`
-- Uses batch size of 4 with data loaded from hardcoded paths in `/home/roberta/DL_new/FNO/Data/`
+- Saves model checkpoints and loss history to `experiments/<param>/checkpoints/`
+- Generates validation visualizations in `experiments/<param>/visualizations/`
+- Uses batch size of 4 with data loaded from relative paths in `input_data/`
 
 **Running inference:**
 ```bash
 python src/inference.py --param <parameter_name>
 ```
-- Loads trained model from `Results/<param>/model/model_64_30.pt`
-- Processes 21 test samples and saves predictions to `Results/<param>/predictions_image/`
-- Data paths are hardcoded to `/home/roberta/DL_new/FNO/Data/`
+- Loads trained model from `experiments/<param>/checkpoints/model_64_30.pt`
+- Processes 21 test samples and saves predictions to `experiments/<param>/visualizations/`
+- Data paths are relative to the current directory
 
 ## Architecture Details
 
@@ -49,8 +49,8 @@ python src/inference.py --param <parameter_name>
 ## Data Pipeline
 
 **Input data structure:**
-- Training data: `/home/roberta/DL_new/FNO/Data/<param>/train/[x|y]_<idx>.npy`
-- Test data: `/home/roberta/DL_new/FNO/Data/<param>/test/[x|y]_<idx>.npy`
+- Training data: `input_data/<param>/train/[x|y]_<idx>.npy`
+- Test data: `input_data/<param>/test/[x|y]_<idx>.npy`
 - Each file contains numpy arrays with shape `(20, 128, 128, 10, [7|1])`
 - Training uses 90 files, test uses 21 files
 
@@ -77,7 +77,7 @@ python src/inference.py --param <parameter_name>
 
 **Loading models:**
 - Models are saved/loaded with `torch.load()` and `model.load_state_dict()`
-- Expected path format: `Results/<param>/model/model_64_30.pt`
+- Expected path format: `experiments/<param>/checkpoints/model_64_30.pt`
 - Model architecture must be instantiated before loading: `FNO3d(64, 64, 5, 30)`
 
 **Data format:**
@@ -86,8 +86,8 @@ python src/inference.py --param <parameter_name>
 
 ## Important Path Conventions
 
-- Results directory structure: `Results/<param>/[model|predictions_image]/`
-- All training/test data paths are hardcoded in `teste2.py` and `inference.py`
+- Results directory structure: `experiments/<param>/[checkpoints|visualizations]/`
+- All training/test data paths are now relative to the project directory
 - When adapting code, update paths in `data()` function (teste2.py:184), `unormalize()` (teste2.py:216), and inference loading (inference.py:27, 36, 39)
 
 ## Key Implementation Notes
