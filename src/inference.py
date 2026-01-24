@@ -13,7 +13,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--param", type=str, default='gasdens') #opt.param
+parser.add_argument("--param", type=str, default='density') #opt.param
 opt = parser.parse_args()
 
 home_dir = os.path.expanduser("~")

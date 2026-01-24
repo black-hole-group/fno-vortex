@@ -164,7 +164,7 @@ class FNO3d(nn.Module):
 device = torch.device('cuda')
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--param", type=str, default='br')
+parser.add_argument("--param", type=str, default='density')
 opt = parser.parse_args()
 
 # Get home directory for relative paths

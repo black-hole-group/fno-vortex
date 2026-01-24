@@ -12,7 +12,7 @@ The visualizations are saved in the Results/<param>/visualizations/ directory.
 Usage:
     python visualize_results.py --param <parameter_name>
 
-Where <parameter_name> is one of: gasdens, gasvy, gasvz, by, bz, br
+Where <parameter_name> is one of: density, vy, vz, by, bz, br
 
 This script follows the same data processing and visualization patterns as seen in the
 training script (train.py) and is compatible with the model checkpoints saved during training.
@@ -31,7 +31,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--param", type=str, default='gasdens') #opt.param
+parser.add_argument("--param", type=str, default='density') #opt.param
 opt = parser.parse_args()
 
 home_dir = os.path.expanduser("~")
