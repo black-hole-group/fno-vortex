@@ -10,7 +10,7 @@ This is a PyTorch implementation of a 3D Fourier Neural Operator (FNO) for solvi
 
 **Training a model:**
 ```bash
-python teste2.py --param <parameter_name>
+python src/teste2.py --param <parameter_name>
 ```
 - Available parameters: `gasdens`, `gasvy`, `gasvz`, `by`, `bz`, `br`
 - Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling
@@ -20,7 +20,7 @@ python teste2.py --param <parameter_name>
 
 **Running inference:**
 ```bash
-python inference.py --param <parameter_name>
+python src/inference.py --param <parameter_name>
 ```
 - Loads trained model from `Results/<param>/model/model_64_30.pt`
 - Processes 21 test samples and saves predictions to `Results/<param>/predictions_image/`
@@ -28,7 +28,7 @@ python inference.py --param <parameter_name>
 
 ## Architecture Details
 
-**FNO3d Model (architecture.py, teste2.py):**
+**FNO3d Model (src/architecture.py, src/teste2.py):**
 - Input: `(batch, 128, 128, 10, 7)` - first 10 timesteps of solution + 3 spatial coordinates
 - Output: `(batch, 128, 128, 10, 1)` - next 10 timesteps prediction
 - The model uses 5 Fourier layers (conv0-conv4) in parallel with 1x1x1 convolutions (w0-w4)

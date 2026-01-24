@@ -9,9 +9,9 @@ This file contains guidelines for agentic coding agents working in this reposito
 - Install dependencies: `pip install torch numpy matplotlib scipy`
 
 ### Build Commands
-- Training: `python teste2.py --param <parameter_name>`
+- Training: `python src/teste2.py --param <parameter_name>`
   - Available parameters: `gasdens`, `gasvy`, `gasvz`, `by`, `bz`, `br`
-- Inference: `python inference.py --param <parameter_name>`
+- Inference: `python src/inference.py --param <parameter_name>`
 
 ### Lint Commands
 - No explicit linting specified, but code generally follows PEP8 conventions
@@ -20,8 +20,8 @@ This file contains guidelines for agentic coding agents working in this reposito
 ### Test Commands
 - No specific test framework found
 - Training and inference files can be run directly
-- To run a single test: `python inference.py --param gasdens`
-- For training a specific parameter: `python teste2.py --param gasdens`
+- To run a single test: `python src/inference.py --param gasdens`
+- For training a specific parameter: `python src/teste2.py --param gasdens`
 
 ## Code Style Guidelines
 
@@ -55,11 +55,11 @@ This file contains guidelines for agentic coding agents working in this reposito
 - No explicit try/catch blocks for expected errors in training/inference
 
 ### Code Structure
-- Model definitions in `architecture.py`
-- Training logic in `teste2.py`
-- Inference logic in `inference.py`
-- Utility functions in `utilities3.py`
-- Custom optimizer in `Adam.py`
+- Model definitions in `src/architecture.py`
+- Training logic in `src/teste2.py`
+- Inference logic in `src/inference.py`
+- Utility functions in `src/utilities3.py`
+- Custom optimizer in `src/Adam.py`
 
 ### Documentation
 - Docstrings for all classes and functions
@@ -67,7 +67,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 - Code is documented in CLAUDE.md file for better understanding
 
 ### Path Conventions
-- All hardcoded paths in `teste2.py` and `inference.py`
+- All hardcoded paths in `src/teste2.py` and `src/inference.py`
 - Data paths in `/home/roberta/DL_new/FNO/Data/`
 - Results paths in `/home/roberta/DL_new/FNO/Results/`
 - Paths should be updated when adapting code for different environments
