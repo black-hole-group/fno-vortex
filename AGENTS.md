@@ -58,7 +58,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 - Model definitions in `src/architecture.py`
 - Training logic in `src/train.py`
 - Inference logic in `src/inference.py`
-- Utility functions in `src/utilities3.py`
+- Utility functions in `src/utilities.py`
 - Custom optimizer in `src/Adam.py`
 
 ### Documentation
