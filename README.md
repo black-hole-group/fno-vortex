@@ -236,19 +236,21 @@ experiments/
 
 All data paths are currently hardcoded. To adapt to your environment, update the following locations:
 
-1. **Training script** (`teste2.py`):
-   ```python
-   # Line ~184: data() function
-   dir = f'/your/path/Data/{param}/train/'
+(1) Training script (`teste2.py`):
 
-   # Line ~216: unormalize() function
-   dir = f'/your/path/Data/{param}/test/'
+   ```python
+# Line ~184: data() function
+dir = f'/your/path/Data/{param}/train/'
+
+# Line ~216: unormalize() function
+dir = f'/your/path/Data/{param}/test/'
    ```
 
-2. **Inference script** (`inference.py`):
+(2) Inference script (`inference.py`):
+
    ```python
-   # Lines ~27, 36, 39: Update base paths
-   dir = f'/your/path/Data/{param}/test/'
+# Lines ~27, 36, 39: Update base paths
+dir = f'/your/path/Data/{param}/test/'
    ```
 
 ### Model Hyperparameters
