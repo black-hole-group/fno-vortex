@@ -7,7 +7,7 @@ This project implements a 3D Fourier Neural Operator (FNO) for solving time-depe
 
 ---
 **REPOSITORY UNDER CONSTRUCTION**  
-We are working to make this repository useful and inference-ready, including a Docker image. For the time being, check out our paper: *Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [arXiv:2507.01388](https://arxiv.org/abs/2507.01388)*.
+We are working to make this repository useful and inference-ready, including a Docker image and train/test data. For the time being, check out our paper: *Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [arXiv:2507.01388](https://arxiv.org/abs/2507.01388)*.
 
 ---
 
@@ -346,7 +346,7 @@ Prediction images show:
 ## TODO
 
 - [x] make repo public
-- [ ] figures and movie! 
+- [ ] figures, movie and dataset
 - [ ] inference guide w/ test dataset
 - [ ] serve the model w/ API
 - [ ] reproducibility: include Docker image
