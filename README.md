@@ -261,5 +261,5 @@ fno/
 - [x] make repo public
 - [ ] figures, movie and dataset
 - [ ] inference guide w/ test dataset
-- [ ] serve the model w/ API
+- [ ] include link to original sim. data and conversion script
 - [ ] reproducibility: include Docker image
