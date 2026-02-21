@@ -167,8 +167,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--param", type=str, default='density')
 opt = parser.parse_args()
 
-# Get home directory for relative paths
-home_dir = os.path.expanduser("~")
+# Paths for data and outputs
+DATA_DIR = 'input_data'
+EXPERIMENTS_DIR = 'experiments'
 
 i = 0
 
@@ -189,13 +190,13 @@ def data(bs, l, param, mode):
 
     if mode == 'Train':
 
-        x = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', param, 'train', 'x_'+str(bs)+'.npy'))
+        x = np.load(os.path.join(DATA_DIR, param, 'train', 'x_'+str(bs)+'.npy'))
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
         x = x[l:l+4]
         x = torch.from_numpy(x).float()
         x = x.cuda()
 
-        y = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', param, 'train', 'y_'+str(bs)+'.npy'))
+        y = np.load(os.path.join(DATA_DIR, param, 'train', 'y_'+str(bs)+'.npy'))
         y = 2*((y - np.min(y))/(np.max(y) - np.min(y))) - 1
         y = y[l:l+4]
         y = torch.from_numpy(y).float()
@@ -203,13 +204,13 @@ def data(bs, l, param, mode):
 
     if mode == 'Test':
 
-        x = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', param, 'test', 'x_'+str(bs)+'.npy'))
+        x = np.load(os.path.join(DATA_DIR, param, 'test', 'x_'+str(bs)+'.npy'))
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
         x = x[l:l+4]
         x = torch.from_numpy(x).float()
         x = x.cuda()
 
-        y = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', param, 'test', 'y_'+str(bs)+'.npy'))
+        y = np.load(os.path.join(DATA_DIR, param, 'test', 'y_'+str(bs)+'.npy'))
         y = 2*((y - np.min(y))/(np.max(y) - np.min(y))) - 1
         y = y[l:l+4]
         y = torch.from_numpy(y).float()
@@ -219,7 +220,7 @@ def data(bs, l, param, mode):
 
 def unormalize(l, bs, param, pred):
 
-    y = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', param, 'train', 'y_'+str(bs)+'.npy'))
+    y = np.load(os.path.join(DATA_DIR, param, 'train', 'y_'+str(bs)+'.npy'))
     y = y[l:l+4]
     y = torch.from_numpy(y).float()
     y = y.cuda()   
@@ -302,7 +303,7 @@ for ep in range(epochs):
         fig.colorbar(im, cax = cax, orientation = 'horizontal')
         cax.set_xlabel('Density prediction')
     
-        plt.savefig(os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'predictions_image', str(i).zfill(4)+'.png'))
+        plt.savefig(os.path.join(EXPERIMENTS_DIR, opt.param, 'visualizations', str(i).zfill(4)+'.png'))
         plt.close(fig) 
         i = i + 1
 
@@ -316,9 +317,9 @@ for ep in range(epochs):
     loss_function.append(train_mae)
     loss_function.append(train_loss)
 
-    np.save(os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'model', 'loss_64_30.npy'), loss_function)
-    torch.save(model.state_dict(), os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'model', 'model_64_30.pt'))
+    np.save(os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
+    torch.save(model.state_dict(), os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt'))
 
-torch.save(model.state_dict(), os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'model', 'model_64_30.pt'))
+torch.save(model.state_dict(), os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt'))
 t2_final = default_timer()
 print(t2_final - t1_final)

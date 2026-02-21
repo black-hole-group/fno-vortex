@@ -34,14 +34,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--param", type=str, default='density') #opt.param
 opt = parser.parse_args()
 
-home_dir = os.path.expanduser("~")
+DATA_DIR = 'input_data'
+EXPERIMENTS_DIR = 'experiments'
 
 # Load the trained model
 model = FNO3d(64, 64, 5, 30).cuda()
-model.load_state_dict(torch.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'model', 'model_64_30.pt')))
+model.load_state_dict(torch.load(os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt')))
 
 # Create visualization directory if it doesn't exist
-vis_dir = os.path.join(home_dir, 'DL_new', 'FNO', 'Results', opt.param, 'visualizations')
+vis_dir = os.path.join(EXPERIMENTS_DIR, opt.param, 'visualizations')
 os.makedirs(vis_dir, exist_ok=True)
 
 print("Generating visualizations for test data...")
@@ -49,7 +50,7 @@ print("Generating visualizations for test data...")
 # Process all test samples
 for j in range(21):
     # Load test data
-    x = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', opt.param, 'test', 'x_'+str(j)+'.npy'))
+    x = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'x_'+str(j)+'.npy'))
     x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
     x = torch.from_numpy(x).float()
     x = x.cuda()
@@ -58,7 +59,7 @@ for j in range(21):
     out = model(x).cpu().detach().numpy()
     
     # Load original data for unnormalization
-    y = np.load(os.path.join(home_dir, 'DL_new', 'FNO', 'Data', opt.param, 'test', 'y_'+str(j)+'.npy'))
+    y = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'y_'+str(j)+'.npy'))
     
     # Unnormalize predictions
     out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)

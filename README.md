@@ -111,10 +111,10 @@ python train.py --param density
 - Learning rate: 0.001 with StepLR scheduler (`step_size=500`, `gamma=0.5`)
 - Loss: Combined MAE (L1) + Relative L2 loss
 
-**Output** (paths are currently hardcoded; see [Configuration](#configuration)):
-- Model checkpoint: `~/DL_new/FNO/Results/<param>/model/model_64_30.pt`
-- Loss history: `~/DL_new/FNO/Results/<param>/model/loss_64_30.npy`
-- Validation images: `~/DL_new/FNO/Results/<param>/predictions_image/` (one per epoch)
+**Output** (paths are relative to project root):
+- Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
+- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
+- Validation images: `experiments/<param>/visualizations/` (one per epoch)
 
 ### Running Inference
 
@@ -169,7 +169,7 @@ The model uses a composite loss (defined in `src/utilities.py`):
 ### Directory Structure
 
 ```
-~/DL_new/FNO/Data/
+input_data/
 ├── density/
 │   ├── train/
 │   │   ├── x_0.npy   # Input: 5 frames + ν + μ
@@ -227,7 +227,7 @@ fno/
 │   ├── utilities.py         # Loss functions: LpLoss, HsLoss, FrequencyLoss
 │   ├── Adam.py              # Custom Adam optimizer
 │   └── visualize_results.py # Result visualization utilities
-└── experiments/             # Placeholder; actual outputs go to ~/DL_new/FNO/Results/
+└── experiments/             # Model checkpoints and visualizations
 ```
 
 ## Troubleshooting
