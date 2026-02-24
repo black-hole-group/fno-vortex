@@ -269,3 +269,5 @@ fno/
 - [ ] inference guide w/ test dataset
 - [ ] include link to original sim. data and conversion script
 - [ ] reproducibility: include Docker image
+- [ ] implement autoregressive rollout
+
