@@ -135,6 +135,8 @@ cd src
 python inference.py --param density
 ```
 
+> **Note — teacher-forced evaluation, not autoregressive rollout:** each of the 21 test files contains pre-assembled ground-truth windows covering a different temporal segment of the FARGO3D simulation. At inference time the model receives real simulation frames as input for every window; its own predictions are never fed back in. This means the reported metrics reflect teacher-forced performance, which is typically much better than free-running (autoregressive) inference where prediction errors would accumulate over time. To simulate forward without a concurrent FARGO3D run you would need to implement an explicit rollout loop that feeds predicted frames back as inputs — that is not currently in this codebase.
+
 ## Physical Parameters
 
 | Parameter | Description | Physical Quantity |

@@ -116,6 +116,7 @@ Training combines two losses:
 ## Key Implementation Notes
 
 - The model operates on CUDA by default (`.cuda()` calls throughout); no CPU fallback in training
+- **Inference is teacher-forced, not autoregressive:** at inference time every prediction window receives ground-truth FARGO3D frames as input — the model's own predictions are never fed back in. The 21 test files contain pre-assembled windows that already cover all temporal segments; the model runs one forward pass per window independently. Benchmarked performance therefore reflects teacher-forced evaluation and will degrade if predictions were fed back as inputs (autoregressive rollout).
 - Batch normalization layers (`bn0`–`bn3`) are defined in `FNO3d.__init__` but never called in `forward()`
 - The time dimension is padded by 6 before the Fourier layers and unpadded after (`x[..., :-self.padding]`)
 - Spatial dimensions are not padded (the Orszag–Tang problem has periodic spatial boundaries)

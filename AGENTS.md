@@ -40,6 +40,7 @@ python src/inference.py --param <parameter_name>
 
 - Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
 - Runs over 21 test files, saves predictions to `experiments/<param>/visualizations/pred_<j>.npy`
+- **Not autoregressive (teacher-forced):** each test file contains pre-assembled ground-truth windows. The model runs one forward pass per window; predictions are never fed back as inputs. Reported metrics reflect teacher-forced performance, not free-running rollout.
 
 ### Linting
 
@@ -127,6 +128,8 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
 5. **Preprocessing script missing:** The script that converts FARGO3D `.dat` outputs to `.npy` format is not in this repository (location TBD).
+
+6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 
 ## Path Conventions
 
