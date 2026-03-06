@@ -1,113 +1,135 @@
 """
 FNO Result Visualization Script
 
-This script generates visualizations of the FNO (Fourier Neural Operator) model's predictions
-compared to the actual target data for test samples. It creates plots showing:
-- Target data (original)
-- Predicted data (from model)
-- Error between target and prediction
-
-The visualizations are saved in the Results/<param>/visualizations/ directory.
+Loads pre-computed predictions from inference.py (pred_<j>.npy) and generates:
+- 10 PNGs per test file: 3-panel (target | prediction | error) for each timestep
+- 1 GIF per test file: animation of all 10 timesteps for sample 0
 
 Usage:
-    python visualize_results.py --param <parameter_name>
+    python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 
-Where <parameter_name> is one of: density, vy, vz, by, bz, br
-
-This script follows the same data processing and visualization patterns as seen in the
-training script (train.py) and is compatible with the model checkpoints saved during training.
+Run inference.py first to produce pred_*.npy files.
 """
 
-import torch
 import numpy as np
 import argparse
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import os
 
-from architecture import *
-
-torch.manual_seed(0)
-np.random.seed(0)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR   = os.path.dirname(SCRIPT_DIR)
+DATA_DIR        = os.path.join(ROOT_DIR, 'input_data')
+EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--param", type=str, default='density') #opt.param
+parser.add_argument("--param", type=str, default='density')
+parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
 opt = parser.parse_args()
 
-DATA_DIR = 'input_data'
-EXPERIMENTS_DIR = 'experiments'
+exp_dir = opt.experiments_dir
+vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
+test_dir = os.path.join(DATA_DIR, opt.param, 'test')
 
-# Load the trained model
-model = FNO3d(64, 64, 5, 30).cuda()
-model.load_state_dict(torch.load(os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt')))
+# Infer number of test files from saved predictions
+n_test = sum(1 for f in os.listdir(vis_dir) if f.startswith('pred_') and f.endswith('.npy'))
+if n_test == 0:
+    raise FileNotFoundError(f"No pred_*.npy files found in {vis_dir}. Run inference.py first.")
 
-# Create visualization directory if it doesn't exist
-vis_dir = os.path.join(EXPERIMENTS_DIR, opt.param, 'visualizations')
-os.makedirs(vis_dir, exist_ok=True)
+print(f"Found {n_test} prediction files. Generating visualizations...")
 
-print("Generating visualizations for test data...")
+for j in range(n_test):
+    pred = np.load(os.path.join(vis_dir, f'pred_{j}.npy'))   # (20, 128, 128, 10)
+    y    = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))  # (20, 128, 128, 10)
 
-# Process all test samples
-for j in range(21):
-    # Load test data
-    x = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'x_'+str(j)+'.npy'))
-    x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
-    x = torch.from_numpy(x).float()
-    x = x.cuda()
-    
-    # Get prediction
-    out = model(x).cpu().detach().numpy()
-    
-    # Load original data for unnormalization
-    y = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'y_'+str(j)+'.npy'))
-    
-    # Unnormalize predictions
-    out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
-    
-    # Load original target data (already normalized for training)
-    y_orig = y
-    
-    # Create visualization for first time step (index 0) 
-    for t in range(4):  # 4 time steps in each sample
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15,6))
-        
-        # Plot target data
-        imt = ax1.pcolormesh(y_orig[t,:,:,0])
-        ax1.set_title('Target Data')
-        
-        # Plot prediction
-        im = ax2.pcolormesh(out[t,:,:,0,0])
-        ax2.set_title('Predicted Data')
-        
-        # Plot error
-        error = y_orig[t,:,:,0] - out[t,:,:,0,0]
-        error_plot = ax3.pcolormesh(error, cmap='hot')
-        ax3.set_title('Error (Target - Prediction)')
-        
-        # Add colorbars
-        divider = make_axes_locatable(ax1)
-        cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
-        fig.add_axes(cax)
-        fig.colorbar(imt, cax=cax, orientation='horizontal')
-        cax.set_xlabel('Target Values')
-        
-        divider = make_axes_locatable(ax2)
-        cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
-        fig.add_axes(cax)
-        fig.colorbar(im, cax=cax, orientation='horizontal')
-        cax.set_xlabel('Prediction Values')
-        
-        divider = make_axes_locatable(ax3)
-        cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
-        fig.add_axes(cax)
-        fig.colorbar(error_plot, cax=cax, orientation='horizontal')
-        cax.set_xlabel('Error')
-        
-        # Save figure
+    s = 0  # representative sample index
+
+    # --- 10 static PNGs ---
+    for t in range(10):
+        target = y[s, :, :, t]
+        pred_t = pred[s, :, :, t]
+        error  = target - pred_t
+
+        vmin = min(target.min(), pred_t.min())
+        vmax = max(target.max(), pred_t.max())
+        eabs = max(abs(error.min()), abs(error.max()))
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig.suptitle(f'{opt.param}  |  test file {j}  |  timestep {t}', fontsize=12)
+
+        im0 = axes[0].pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
+        axes[0].set_title('Target')
+        axes[0].set_aspect('equal')
+
+        im1 = axes[1].pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
+        axes[1].set_title('Prediction')
+        axes[1].set_aspect('equal')
+
+        im2 = axes[2].pcolormesh(error, vmin=-eabs, vmax=eabs, cmap='RdBu_r')
+        axes[2].set_title('Error (Target - Prediction)')
+        axes[2].set_aspect('equal')
+
+        for ax, im in zip(axes, [im0, im1, im2]):
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('bottom', size='5%', pad=0.4)
+            fig.colorbar(im, cax=cax, orientation='horizontal')
+
         plt.tight_layout()
-        plt.savefig(os.path.join(vis_dir, f'sample_{j:02d}_time_{t:02d}.png'))
+        fname = os.path.join(vis_dir, f'sample_{j:02d}_time_{t:02d}.png')
+        plt.savefig(fname, dpi=100, bbox_inches='tight')
         plt.close(fig)
-        
-        print(f"Saved visualization for sample {j}, time step {t}")
 
-print("Visualizations complete!")
+    print(f"  [{j+1}/{n_test}] Saved 10 PNGs for test file {j}")
+
+    # --- 1 GIF animation ---
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle(f'{opt.param}  |  test file {j}  |  sample 0', fontsize=12)
+
+    vmin_all = min(y[s].min(), pred[s].min())
+    vmax_all = max(y[s].max(), pred[s].max())
+    eabs_all = max(abs((y[s] - pred[s]).min()), abs((y[s] - pred[s]).max()))
+
+    target0 = y[s, :, :, 0]
+    pred0   = pred[s, :, :, 0]
+    error0  = target0 - pred0
+
+    im0 = axes[0].pcolormesh(target0, vmin=vmin_all, vmax=vmax_all, cmap='viridis')
+    axes[0].set_title('Target')
+    axes[0].set_aspect('equal')
+    im1 = axes[1].pcolormesh(pred0,   vmin=vmin_all, vmax=vmax_all, cmap='viridis')
+    axes[1].set_title('Prediction')
+    axes[1].set_aspect('equal')
+    im2 = axes[2].pcolormesh(error0,  vmin=-eabs_all, vmax=eabs_all, cmap='RdBu_r')
+    axes[2].set_title('Error (Target - Prediction)')
+    axes[2].set_aspect('equal')
+
+    for ax, im in zip(axes, [im0, im1, im2]):
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('bottom', size='5%', pad=0.4)
+        fig.colorbar(im, cax=cax, orientation='horizontal')
+
+    plt.tight_layout()
+    time_text = fig.text(0.5, 1.01, '', ha='center', va='bottom',
+                         transform=axes[1].transAxes, fontsize=11)
+
+    def update(t):
+        target_t = y[s, :, :, t]
+        pred_t   = pred[s, :, :, t]
+        error_t  = target_t - pred_t
+        im0.set_array(target_t.ravel())
+        im1.set_array(pred_t.ravel())
+        im2.set_array(error_t.ravel())
+        time_text.set_text(f'timestep {t}')
+        return im0, im1, im2, time_text
+
+    ani = animation.FuncAnimation(fig, update, frames=10, interval=400, blit=False)
+    gif_path = os.path.join(vis_dir, f'sample_{j:02d}_evolution.gif')
+    ani.save(gif_path, writer='pillow', dpi=80)
+    plt.close(fig)
+
+    print(f"  [{j+1}/{n_test}] Saved GIF for test file {j}")
+
+print("Done.")

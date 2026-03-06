@@ -30,6 +30,17 @@ python inference.py --param <parameter_name>
 - Runs over 21 test files and saves denormalized predictions as `.npy` arrays to
   `experiments/<param>/visualizations/pred_<j>.npy`
 
+**Visualizing results** (run after inference):
+```bash
+cd src
+python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
+```
+- Loads `pred_<j>.npy` files saved by `inference.py` (does **not** re-run the model)
+- For each test file `j`, using sample index 0:
+  - 10 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
+  - 1 GIF:  `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
+- Outputs saved to `experiments/<param>/visualizations/`
+
 **Note on paths:** Data is read from `input_data/<param>/[train|test]/` and results are written to `experiments/<param>/`.
 
 ## Architecture Details
