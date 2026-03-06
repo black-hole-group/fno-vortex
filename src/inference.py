@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 import argparse
-import scipy
 
 from timeit import default_timer
 
@@ -27,27 +26,30 @@ exp_dir = opt.experiments_dir
 os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
 model = FNO3d(64, 64, 5, 30).cuda()
-model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')))
+model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'), weights_only=True))
+model.eval()
 
+
+test_dir = os.path.join(DATA_DIR, opt.param, 'test')
+n_test = sum(1 for f in os.listdir(test_dir) if f.startswith('x_') and f.endswith('.npy'))
 
 t1 = default_timer()
 
-for j in range(21):
-    
-    x = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'x_'+str(j)+'.npy'))
-    x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
-    x = torch.from_numpy(x).float()
-    x = x.cuda()
-    
-    out = model(x).cpu().detach().numpy()
+with torch.no_grad():
+    for j in range(n_test):
+        x = np.load(os.path.join(test_dir, 'x_'+str(j)+'.npy'))
+        x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
+        x = torch.from_numpy(x).float().cuda()
 
-    del x
+        out = model(x).cpu().numpy()
 
-    y = np.load(os.path.join(DATA_DIR, opt.param, 'test', 'y_'+str(j)+'.npy'))
-    out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
+        del x
 
-    np.save(os.path.join(exp_dir, opt.param, 'visualizations', 'pred_'+str(j)+'.npy'), out)
+        y = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))
+        out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
+
+        np.save(os.path.join(exp_dir, opt.param, 'visualizations', 'pred_'+str(j)+'.npy'), out)
 
 t2 = default_timer()
 
-print(t2-t1)
+print(f"Inference time: {t2-t1:.2f}s")
