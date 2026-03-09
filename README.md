@@ -77,14 +77,6 @@ Output: (batch, 128, 128, 10, 1) → next 10 timesteps
 - Temporal padding: 6 (for non-periodic temporal boundaries)
 - Activation: GELU
 
-### SpectralConv3d
-
-Performs operations in Fourier space:
-1. **FFT**: Transform to frequency domain using `torch.fft.rfftn`
-2. **Complex multiplication**: 4 learned weight tensors multiply Fourier coefficients across x/y octants
-3. **Inverse FFT**: Transform back to physical space using `torch.fft.irfftn`
-4. **Parallel path**: 1×1×1 convolution acts as skip connection
-
 ## Usage
 
 ### Training a Model
@@ -142,17 +134,6 @@ Each of the 21 test files contains pre-assembled ground-truth windows covering a
 ---
 
 
-## Physical Parameters
-
-| Parameter | Description | Physical Quantity |
-|-----------|-------------|-------------------|
-| `density` | Gas density | ρ |
-| `vy` | Gas velocity Y | v_y component |
-| `vz` | Gas velocity Z | v_z component |
-| `by` | Magnetic field Y | B_y component |
-| `bz` | Magnetic field Z | B_z component |
-| `br` | Magnetic field radial | B_r component |
-
 ## Training Details
 
 ### Loss Functions
@@ -206,13 +187,6 @@ input_data/
 
 ## Configuration
 
-### Updating Data Paths
-
-Data and results paths are currently hardcoded in both scripts. To adapt to your environment, update the `os.path.join(home_dir, ...)` calls in:
-
-- `src/train.py`: `data()` function (input) and `unormalize()` function (for denormalization)
-- `src/inference.py`: input data path and results output path
-
 ### Model Hyperparameters
 
 To modify the model architecture, edit the instantiation in `src/train.py` and `src/inference.py`:
@@ -249,13 +223,6 @@ fno/
 - Reduce the slice size in the inner training loop in `src/train.py`
 - Use a smaller model width or fewer Fourier modes
 
-**File not found errors:**
-- Update the hardcoded paths in `src/train.py` and `src/inference.py` to match your data location
-- Ensure data files follow the expected naming convention: `x_<idx>.npy`, `y_<idx>.npy`
-
-**Import errors on `utilities3`:**
-- `src/train.py` imports `from utilities3 import *` but the file is `src/utilities.py` — rename or update the import before running training
-
 **Model not converging:**
 - Check that normalization is applied correctly (physical parameter channels must not be normalized)
 - Verify input data quality and range
@@ -265,15 +232,4 @@ fno/
 - Duarte, Nemmen & Lima-Santos (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 - Li et al. (2020). Fourier Neural Operator for Parametric Partial Differential Equations. [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
 
----
-
-## TODO
-
-- [x] make repo public
-- [x] refactor (ongoing)
-- [ ] figures, movie and dataset
-- [ ] inference guide w/ test dataset
-- [ ] include link to original sim. data and conversion script
-- [ ] reproducibility: include Docker image
-- [ ] implement autoregressive rollout that feeds predicted frames back as inputs (see note about forecasting)
 
