@@ -215,18 +215,6 @@ fno/
 └── experiments/             # Model checkpoints and visualizations
 ```
 
-## Troubleshooting
-
-### Common Issues
-
-**CUDA out of memory:**
-- Reduce the slice size in the inner training loop in `src/train.py`
-- Use a smaller model width or fewer Fourier modes
-
-**Model not converging:**
-- Check that normalization is applied correctly (physical parameter channels must not be normalized)
-- Verify input data quality and range
-
 ## References
 
 - Duarte, Nemmen & Lima-Santos (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
