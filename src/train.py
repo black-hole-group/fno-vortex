@@ -163,13 +163,19 @@ class FNO3d(nn.Module):
 
 device = torch.device('cuda')
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR   = os.path.dirname(SCRIPT_DIR)
+DATA_DIR        = os.path.join(ROOT_DIR, 'data')
+EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--param", type=str, default='density')
+parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
 opt = parser.parse_args()
 
-# Paths for data and outputs
-DATA_DIR = 'input_data'
-EXPERIMENTS_DIR = 'experiments'
+exp_dir = opt.experiments_dir
+os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
+os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
 i = 0
 
@@ -184,7 +190,6 @@ model = FNO3d(64, 64, 5, 30).cuda()
 optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step, gamma=scheduler_gamma)
 
-#model.load_state_dict(torch.load('/data0/Results/'+opt.param+'/model/model_'+str(opt.modes_r)+'_'+str(opt.modes_theta)+'.pt'))
 
 def data(bs, l, param, mode):
 
@@ -303,7 +308,7 @@ for ep in range(epochs):
         fig.colorbar(im, cax = cax, orientation = 'horizontal')
         cax.set_xlabel('Density prediction')
     
-        plt.savefig(os.path.join(EXPERIMENTS_DIR, opt.param, 'visualizations', str(i).zfill(4)+'.png'))
+        plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(i).zfill(4)+'.png'))
         plt.close(fig) 
         i = i + 1
 
@@ -317,9 +322,9 @@ for ep in range(epochs):
     loss_function.append(train_mae)
     loss_function.append(train_loss)
 
-    np.save(os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
-    torch.save(model.state_dict(), os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt'))
+    np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
+    torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
 
-torch.save(model.state_dict(), os.path.join(EXPERIMENTS_DIR, opt.param, 'checkpoints', 'model_64_30.pt'))
+torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
 t2_final = default_timer()
 print(t2_final - t1_final)

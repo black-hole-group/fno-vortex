@@ -22,7 +22,7 @@ import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR   = os.path.dirname(SCRIPT_DIR)
-DATA_DIR        = os.path.join(ROOT_DIR, 'input_data')
+DATA_DIR        = os.path.join(ROOT_DIR, 'data')
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
 parser = argparse.ArgumentParser()
