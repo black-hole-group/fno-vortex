@@ -19,7 +19,7 @@ The paper associated with this codebase is `paper/main.tex`. Detailed documentat
 ### Training
 
 ```bash
-python src/train.py --param <parameter_name>
+python src/train.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
 - **Parameters:** `density`, `vy`, `by` (defaults to `density`)
@@ -35,12 +35,24 @@ python src/train.py --param <parameter_name>
 ### Inference
 
 ```bash
-python src/inference.py --param <parameter_name>
+python src/inference.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
 - Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
 - Runs over 21 test files, saves predictions to `experiments/<param>/visualizations/pred_<j>.npy`
 - **Not autoregressive (teacher-forced):** each test file contains pre-assembled ground-truth windows. The model runs one forward pass per window; predictions are never fed back as inputs. Reported metrics reflect teacher-forced performance, not free-running rollout.
+
+### Visualization
+
+```bash
+python src/visualize_results.py --param <parameter_name> [--experiments-dir <path>]
+```
+
+- Loads `pred_<j>.npy` files saved by `inference.py` (does **not** re-run the model)
+- For each test file `j`, using sample index 0:
+  - 10 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
+  - 1 GIF: `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
+- Outputs saved to `experiments/<param>/visualizations/`
 
 ### Linting
 
@@ -51,8 +63,8 @@ python src/inference.py --param <parameter_name>
 
 ### Input Data Structure
 
-- **Training:** `input_data/<param>/train/[x|y]_<idx>.npy`, indices 0-89 (90 files)
-- **Test:** `input_data/<param>/test/[x|y]_<idx>.npy`, indices 0-20 (21 files)
+- **Training:** `data/<param>/train/[x|y]_<idx>.npy`, indices 0-89 (90 files)
+- **Test:** `data/<param>/test/[x|y]_<idx>.npy`, indices 0-20 (21 files)
 - **Input shape:** `(20, 128, 128, 10, 7)` -- 20 samples, 128x128 grid, 10 frames, 7 channels
 - **Output shape:** `(20, 128, 128, 10)` -- 10 predicted frames
 
@@ -116,6 +128,8 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 - `src/inference.py` -- inference logic
 - `src/utilities.py` -- loss functions and normalizers
 - `src/Adam.py` -- custom Adam optimizer
+- `src/visualize_results.py` -- visualization of inference results
+- `src/architecture_diagram.py` -- architecture diagram generation
 
 ## Known Issues
 
@@ -135,6 +149,6 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 
 All paths are relative to the project root:
 
-- **Data:** `input_data/<param>/[train|test]/`
+- **Data:** `data/<param>/[train|test]/`
 - **Checkpoints:** `experiments/<param>/checkpoints/`
 - **Visualizations:** `experiments/<param>/visualizations/`
