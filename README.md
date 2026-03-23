@@ -32,21 +32,8 @@ This implementation:
 - Python 3.8 or higher
 - CUDA-capable GPU (required for training)
 - 8GB+ GPU memory recommended
+- Numpy, matplotlib, scipy, PyTorch
 
-### Setup
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd fno
-
-# Install dependencies
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install numpy matplotlib scipy
-
-# Verify PyTorch CUDA availability
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-```
 
 ## Model Architecture
 
@@ -112,7 +99,7 @@ python train.py --param density
 - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
 - Validation images: `experiments/<param>/visualizations/` (one per epoch)
 
-### Running Inference
+### Inference
 
 ```bash
 cd src
@@ -161,7 +148,7 @@ The model uses a composite loss (defined in `src/utilities.py`):
 ### Directory Structure
 
 ```
-input_data/
+data/
 ├── density/
 │   ├── train/
 │   │   ├── x_0.npy   # Input: 5 frames + ν + μ
