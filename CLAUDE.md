@@ -13,7 +13,7 @@ The paper associated with this codebase is `paper/main.tex`.
 **Training a model:**
 ```bash
 cd src
-python train.py --param <parameter_name>
+python train.py --param <parameter_name> [--experiments-dir <path>]
 ```
 - `--param` selects which physical field to train on (e.g. `density`, `vy`, `by`; defaults to `density`)
 - Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling (step=500, γ=0.5)
@@ -41,7 +41,7 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
   - 1 GIF:  `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
 - Outputs saved to `experiments/<param>/visualizations/`
 
-**Note on paths:** Data is read from `input_data/<param>/[train|test]/` and results are written to `experiments/<param>/`.
+**Note on paths:** Data is read from `data/<param>/[train|test]/` and results are written to `experiments/<param>/`. All scripts resolve paths relative to the repository root using `__file__`, so they can be run from any working directory.
 
 ## Architecture Details
 
@@ -69,8 +69,8 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 ## Data Pipeline
 
 **Input data structure:**
-- Training data: `input_data/<param>/train/[x|y]_<idx>.npy`, indices 0–89 (90 files)
-- Test data: `input_data/<param>/test/[x|y]_<idx>.npy`, indices 0–20 (21 files)
+- Training data: `data/<param>/train/[x|y]_<idx>.npy`, indices 0–89 (90 files)
+- Test data: `data/<param>/test/[x|y]_<idx>.npy`, indices 0–20 (21 files)
 - Each `x` file has shape `(20, 128, 128, 10, 7)` — 20 samples, 128×128 spatial grid, 10 temporal frames, 7 channels
 - Each `y` file has shape `(20, 128, 128, 10)` — same samples, 10 output frames
 
