@@ -20,13 +20,12 @@ Dependencies:
 import argparse
 import csv
 import os
+import re
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-
-import inifix
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -45,14 +44,14 @@ def run_simulation(sim_id, nu, mu, split, gpu_id="0"):
     run_dir = RUNS_DIR / f"sim_{sim_id:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy and patch idefix.ini
+    # Copy and patch idefix.ini (regex replace to preserve Idefix's non-standard format)
     ini_dst = run_dir / "idefix.ini"
     shutil.copy(INI_TEMPLATE, ini_dst)
 
-    conf = inifix.load(str(ini_dst))
-    conf["Viscosity"]["nu"] = float(nu)
-    conf["Resistivity"]["eta"] = float(mu)
-    inifix.dump(conf, str(ini_dst))
+    text = ini_dst.read_text()
+    text = re.sub(r'(nu\s+)\S+', rf'\g<1>{float(nu):.6e}', text)
+    text = re.sub(r'(eta\s+)\S+', rf'\g<1>{float(mu):.6e}', text)
+    ini_dst.write_text(text)
 
     # Symlink the compiled binary
     bin_link = run_dir / "idefix"
