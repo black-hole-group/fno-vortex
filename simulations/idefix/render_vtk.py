@@ -13,12 +13,15 @@ Usage:
   --output   output movie path (default: <sim_dir>/movie.mp4)
 
 Requires:
-  pip install imageio imageio-ffmpeg matplotlib numpy
+  pip install matplotlib numpy tqdm
+  ffmpeg must be available on $PATH
   $IDEFIX_DIR must point to the Idefix source tree (for pytools/vtk_io.py)
 """
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,11 +30,6 @@ import matplotlib
 matplotlib.use("Agg")
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-
-try:
-    import imageio.v2 as imageio
-except ImportError:
-    import imageio
 
 # ── locate Idefix pytools/vtk_io.py ───────────────────────────────────────────
 _idefix_dir = os.environ.get("IDEFIX_DIR")
@@ -53,7 +51,34 @@ from pytools.vtk_io import readVTK  # noqa: E402
 QUIVER_STRIDE = 8
 
 
-def render_frame(vtk_path: Path, out_path: Path) -> None:
+def compute_clims(vtk_files: list) -> dict:
+    """First pass: compute global min/max for rho, |B|, |v| across all frames."""
+    rho_min, rho_max = np.inf, -np.inf
+    bmag_min, bmag_max = np.inf, -np.inf
+    vmag_min, vmag_max = np.inf, -np.inf
+
+    for vtk in tqdm(vtk_files, unit="file", desc="scanning"):
+        V = readVTK(str(vtk))
+        rho  = V.data["RHO"][:, :, 0]
+        vx   = V.data["VX1"][:, :, 0]
+        vy   = V.data["VX2"][:, :, 0]
+        bx   = V.data["BX1"][:, :, 0]
+        by   = V.data["BX2"][:, :, 0]
+        bmag = np.sqrt(bx**2 + by**2)
+        vmag = np.sqrt(vx**2 + vy**2)
+
+        rho_min,  rho_max  = min(rho_min,  rho.min()),  max(rho_max,  rho.max())
+        bmag_min, bmag_max = min(bmag_min, bmag.min()), max(bmag_max, bmag.max())
+        vmag_min, vmag_max = min(vmag_min, vmag.min()), max(vmag_max, vmag.max())
+
+    return {
+        "rho":  (rho_min,  rho_max),
+        "bmag": (bmag_min, bmag_max),
+        "vmag": (vmag_min, vmag_max),
+    }
+
+
+def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
     V = readVTK(str(vtk_path))
 
     # 2D fields: (nx, ny, nz=1) → (nx, ny)
@@ -76,7 +101,8 @@ def render_frame(vtk_path: Path, out_path: Path) -> None:
 
     # Panel 1: density
     ax = axes[0]
-    im = ax.pcolormesh(x, y, rho.T, cmap="inferno", shading="auto")
+    im = ax.pcolormesh(x, y, rho.T, cmap="inferno", shading="auto",
+                       vmin=clims["rho"][0], vmax=clims["rho"][1])
     fig.colorbar(im, ax=ax)
     ax.set_title(r"Density  $\rho$")
     ax.set_aspect("equal")
@@ -86,7 +112,8 @@ def render_frame(vtk_path: Path, out_path: Path) -> None:
     # Panel 2: magnetic field magnitude + vectors
     ax = axes[1]
     bmag = np.sqrt(bx**2 + by**2)
-    im = ax.pcolormesh(x, y, bmag.T, cmap="cividis", shading="auto")
+    im = ax.pcolormesh(x, y, bmag.T, cmap="cividis", shading="auto",
+                       vmin=clims["bmag"][0], vmax=clims["bmag"][1])
     fig.colorbar(im, ax=ax, label="|B|")
     ax.quiver(Xq, Yq, bxq, byq, color="white", alpha=0.8, pivot="mid")
     ax.set_title(r"Magnetic field  $\mathbf{B}$")
@@ -97,7 +124,8 @@ def render_frame(vtk_path: Path, out_path: Path) -> None:
     # Panel 3: velocity magnitude + vectors
     ax = axes[2]
     vmag = np.sqrt(vx**2 + vy**2)
-    im = ax.pcolormesh(x, y, vmag.T, cmap="viridis", shading="auto")
+    im = ax.pcolormesh(x, y, vmag.T, cmap="viridis", shading="auto",
+                       vmin=clims["vmag"][0], vmax=clims["vmag"][1])
     fig.colorbar(im, ax=ax, label="|v|")
     ax.quiver(Xq, Yq, vxq, vyq, color="white", alpha=0.8, pivot="mid")
     ax.set_title(r"Velocity field  $\mathbf{v}$")
@@ -125,27 +153,40 @@ def main():
 
     sim_dir = Path(args.sim_dir).resolve()
     frames_dir = sim_dir / "frames"
-    frames_dir.mkdir(exist_ok=True)
+    shutil.rmtree(frames_dir, ignore_errors=True)
+    frames_dir.mkdir()
 
     vtk_files = sorted(sim_dir.glob("data.????.vtk"))[::args.stride]
     if not vtk_files:
         print(f"No VTK files found in {sim_dir}")
         sys.exit(1)
 
-    print(f"Found {len(vtk_files)} VTK files. Rendering frames to {frames_dir}/")
+    print(f"Found {len(vtk_files)} VTK files.")
+    clims = compute_clims(vtk_files)
+
+    print(f"Rendering frames to {frames_dir}/")
     frame_paths = []
-    with tqdm(vtk_files, unit="frame") as pbar:
-        for vtk in pbar:
-            out = frames_dir / (vtk.stem + ".png")
+    with tqdm(vtk_files, unit="frame", desc="rendering") as pbar:
+        for i, vtk in enumerate(pbar):
+            out = frames_dir / f"frame_{i:04d}.png"
             pbar.set_postfix_str(f"{vtk.name} → {out.name}")
-            render_frame(vtk, out)
+            render_frame(vtk, out, clims)
             frame_paths.append(out)
 
     out_movie = Path(args.output) if args.output else sim_dir / "movie.mp4"
     print(f"\nAssembling {len(frame_paths)} frames → {out_movie}")
-    with imageio.get_writer(str(out_movie), fps=args.fps) as writer:
-        for p in tqdm(frame_paths, unit="frame", desc="encoding"):
-            writer.append_data(imageio.imread(str(p)))
+    cmd = [
+        "ffmpeg", "-y",
+        "-framerate", str(args.fps),
+        "-i", str(frames_dir / "frame_%04d.png"),
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        str(out_movie),
+    ]
+    subprocess.run(cmd, check=True)
     print("Done.")
 
 
