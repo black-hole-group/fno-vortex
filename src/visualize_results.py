@@ -50,7 +50,7 @@ total_pngs = 0
 total_gifs = 0
 
 for j in tqdm(range(n_test), desc="Test files", unit="file"):
-    pred = np.load(os.path.join(vis_dir, f'pred_{j}.npy'))   # (20, 128, 128, 10)
+    pred = np.load(os.path.join(vis_dir, f'pred_{j}.npy')).squeeze(-1)   # (20, 128, 128, 10)
     y    = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))  # (20, 128, 128, 10)
 
     s = 0 # representative sample index
