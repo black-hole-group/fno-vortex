@@ -49,8 +49,8 @@ def run_simulation(sim_id, nu, mu, split, gpu_id="0"):
     shutil.copy(INI_TEMPLATE, ini_dst)
 
     text = ini_dst.read_text()
-    text = re.sub(r'(nu\s+)\S+', rf'\g<1>{float(nu):.6e}', text)
-    text = re.sub(r'(eta\s+)\S+', rf'\g<1>{float(mu):.6e}', text)
+    text = re.sub(r'(viscosity\s+explicit\s+constant\s+)\S+', rf'\g<1>{float(nu):.6e}', text)
+    text = re.sub(r'(resistivity\s+explicit\s+constant\s+)\S+', rf'\g<1>{float(mu):.6e}', text)
     ini_dst.write_text(text)
 
     # Symlink the compiled binary
