@@ -5,10 +5,13 @@ For each row in params.csv:
   1. Creates a run directory: runs/sim_XXX/
   2. Copies idefix.ini and patches nu and eta using inifix
   3. Symlinks the compiled idefix binary
-  4. Runs the simulation (sequential, one at a time)
+  4. Runs the simulation
+
+Simulations are dispatched in parallel across available GPUs (one per GPU at a
+time, round-robin). Use --gpus to specify which GPU IDs to use.
 
 Usage:
-  python run_simulations.py [--start N] [--end N] [--params params.csv]
+  python run_simulations.py [--start N] [--end N] [--params params.csv] [--gpus 0,1]
 
 Dependencies:
   pip install inifix
@@ -20,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import inifix
@@ -37,7 +41,7 @@ def load_params(params_file):
         return list(reader)
 
 
-def run_simulation(sim_id, nu, mu, split):
+def run_simulation(sim_id, nu, mu, split, gpu_id="0"):
     run_dir = RUNS_DIR / f"sim_{sim_id:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -56,16 +60,19 @@ def run_simulation(sim_id, nu, mu, split):
         bin_link.unlink()
     bin_link.symlink_to(IDEFIX_BIN)
 
-    print(f"\n[sim_{sim_id:03d}] nu={float(nu):.3e}  mu={float(mu):.3e}  split={split}")
+    print(f"\n[sim_{sim_id:03d}] nu={float(nu):.3e}  mu={float(mu):.3e}  split={split}  GPU={gpu_id}")
     print(f"  Run dir: {run_dir}")
 
     log_path = run_dir / "idefix.log"
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     with open(log_path, "w") as log_file:
         result = subprocess.run(
             ["./idefix"],
             cwd=run_dir,
             stdout=log_file,
             stderr=subprocess.STDOUT,
+            env=env,
         )
 
     if result.returncode != 0:
@@ -90,7 +97,11 @@ def main():
                         help="First sim_id to run (inclusive)")
     parser.add_argument("--end", type=int, default=None,
                         help="Last sim_id to run (inclusive). Defaults to last.")
+    parser.add_argument("--gpus", default="0,1",
+                        help="Comma-separated GPU IDs to use (default: 0,1)")
     args = parser.parse_args()
+
+    gpus = [g.strip() for g in args.gpus.split(",")]
 
     if not IDEFIX_BIN.exists():
         print(f"Error: Idefix binary not found at {IDEFIX_BIN}")
@@ -102,13 +113,23 @@ def main():
     end = args.end if args.end is not None else len(params) - 1
     subset = [p for p in params if args.start <= int(p["sim_id"]) <= end]
 
-    print(f"Running {len(subset)} simulations (sim {args.start} to {end})")
+    print(f"Running {len(subset)} simulations (sim {args.start} to {end}) "
+          f"across GPU(s): {', '.join(gpus)}")
 
     failed = []
-    for p in subset:
-        ok = run_simulation(int(p["sim_id"]), p["nu"], p["mu"], p["split"])
-        if not ok:
-            failed.append(p["sim_id"])
+    with ProcessPoolExecutor(max_workers=len(gpus)) as executor:
+        futures = {
+            executor.submit(
+                run_simulation,
+                int(p["sim_id"]), p["nu"], p["mu"], p["split"],
+                gpus[i % len(gpus)],
+            ): p["sim_id"]
+            for i, p in enumerate(subset)
+        }
+        for future in as_completed(futures):
+            sim_id = futures[future]
+            if not future.result():
+                failed.append(sim_id)
 
     print(f"\n{'='*50}")
     print(f"Completed {len(subset) - len(failed)}/{len(subset)} simulations successfully.")

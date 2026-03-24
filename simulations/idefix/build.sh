@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build Idefix for GPU (RTX 3090 Ti = Ampere sm_86)
+# Build Idefix for GPU (Quadro GP100 = Pascal sm_60, Quadro P6000 = Pascal sm_61)
+# sm_60 code is forward-compatible with sm_61, so one arch flag covers both GPUs.
 # Run this from the simulations/idefix/ directory.
 # Requires: $IDEFIX_DIR to point to the Idefix source tree.
 
@@ -13,7 +14,7 @@ fi
 cmake "$IDEFIX_DIR" \
   -DIdefix_MHD=ON \
   -DKokkos_ENABLE_CUDA=ON \
-  -DKokkos_ARCH_AMPERE86=ON
+  -DKokkos_ARCH_PASCAL60=ON
 
 make -j"$(nproc)"
 
