@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 try:
@@ -133,16 +134,17 @@ def main():
 
     print(f"Found {len(vtk_files)} VTK files. Rendering frames to {frames_dir}/")
     frame_paths = []
-    for i, vtk in enumerate(vtk_files):
-        out = frames_dir / (vtk.stem + ".png")
-        render_frame(vtk, out)
-        frame_paths.append(out)
-        print(f"  [{i+1}/{len(vtk_files)}] {vtk.name} → {out.name}")
+    with tqdm(vtk_files, unit="frame") as pbar:
+        for vtk in pbar:
+            out = frames_dir / (vtk.stem + ".png")
+            pbar.set_postfix_str(f"{vtk.name} → {out.name}")
+            render_frame(vtk, out)
+            frame_paths.append(out)
 
     out_movie = Path(args.output) if args.output else sim_dir / "movie.mp4"
     print(f"\nAssembling {len(frame_paths)} frames → {out_movie}")
     with imageio.get_writer(str(out_movie), fps=args.fps) as writer:
-        for p in frame_paths:
+        for p in tqdm(frame_paths, unit="frame", desc="encoding"):
             writer.append_data(imageio.imread(str(p)))
     print("Done.")
 
