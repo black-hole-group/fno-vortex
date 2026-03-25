@@ -177,6 +177,9 @@ exp_dir = opt.experiments_dir
 os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
 os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
+n_train = len([f for f in os.listdir(os.path.join(DATA_DIR, opt.param, 'train')) if f.startswith('x_')])
+n_test  = len([f for f in os.listdir(os.path.join(DATA_DIR, opt.param, 'test'))  if f.startswith('x_')])
+
 i = 0
 
 learning_rate = 0.001
@@ -245,7 +248,7 @@ for ep in range(epochs):
     train_mae = 0
     train_loss = 0
 
-    for bs in range(90):
+    for bs in range(n_train):
 
         for l in range(0, 16, 4): 
         
@@ -277,7 +280,7 @@ for ep in range(epochs):
     with torch.no_grad():
         l = 4
 
-        j = np.random.randint(21)
+        j = np.random.randint(n_test)
 
         xt, yt = data(j, l, opt.param, 'Test')
 
@@ -312,8 +315,8 @@ for ep in range(epochs):
         plt.close(fig) 
         i = i + 1
 
-    train_mae /= 1440
-    train_loss /= 1440
+    train_mae /= (n_train * 16)
+    train_loss /= (n_train * 16)
     #test_mse /= 90
 
     t2 = default_timer()
