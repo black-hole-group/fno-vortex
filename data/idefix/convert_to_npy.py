@@ -23,7 +23,7 @@ Usage:
 
 Dependencies:
   pip install numpy tqdm
-  $IDEFIX_DIR must point to the Idefix source tree (for pytools/vtk.py)
+  $IDEFIX_DIR must point to the Idefix source tree (for pytools/vtk_io.py)
 """
 
 import argparse
@@ -39,7 +39,7 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-# ── locate Idefix pytools/vtk.py ──────────────────────────────────────────────
+# ── locate Idefix pytools/vtk_io.py ───────────────────────────────────────────
 _idefix_dir = os.environ.get("IDEFIX_DIR")
 if _idefix_dir:
     sys.path.insert(0, _idefix_dir)
@@ -52,11 +52,11 @@ else:
         print("Set $IDEFIX_DIR to the Idefix source directory and re-run.")
         sys.exit(1)
 
-import pytools.vtk as pvtk  # noqa: E402
+from pytools.vtk_io import readVTK  # noqa: E402
 
 def read_vtk(path):
-    reader = pvtk.VtkReader(str(path))
-    return reader.data
+    V = readVTK(str(path))
+    return V.data
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
