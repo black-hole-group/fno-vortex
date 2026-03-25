@@ -22,12 +22,14 @@ Usage:
                            [--output-dir ../../data]
 
 Dependencies:
-  pip install idefix-pytools numpy tqdm
+  pip install numpy tqdm
+  $IDEFIX_DIR must point to the Idefix source tree (for pytools/vtk.py)
 """
 
 import argparse
 import csv
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -37,23 +39,24 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-try:
-    import pytools.vtk as pvtk
-    def read_vtk(path):
-        reader = pvtk.VtkReader(str(path))
-        return reader.data
-except ImportError:
-    try:
-        import yt
-        def read_vtk(path):
-            raise NotImplementedError(
-                "idefix-pytools not found. Install with: pip install idefix-pytools"
-            )
-    except ImportError:
-        def read_vtk(path):
-            raise ImportError(
-                "idefix-pytools not found. Install with: pip install idefix-pytools"
-            )
+# ── locate Idefix pytools/vtk.py ──────────────────────────────────────────────
+_idefix_dir = os.environ.get("IDEFIX_DIR")
+if _idefix_dir:
+    sys.path.insert(0, _idefix_dir)
+else:
+    _guess = Path(__file__).resolve().parents[4] / "idefix"
+    if _guess.exists():
+        sys.path.insert(0, str(_guess))
+    else:
+        print("Error: $IDEFIX_DIR is not set and idefix/ was not found automatically.")
+        print("Set $IDEFIX_DIR to the Idefix source directory and re-run.")
+        sys.exit(1)
+
+import pytools.vtk as pvtk  # noqa: E402
+
+def read_vtk(path):
+    reader = pvtk.VtkReader(str(path))
+    return reader.data
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
