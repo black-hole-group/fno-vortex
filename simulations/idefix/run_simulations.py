@@ -3,7 +3,7 @@ Batch runner for Idefix Orszag-Tang vortex simulations.
 
 For each row in params.csv:
   1. Creates a run directory: runs/sim_XXX/
-  2. Copies idefix.ini and patches nu and eta using inifix
+  2. Copies idefix.ini and patches nu and eta using regex
   3. Symlinks the compiled idefix binary
   4. Runs the simulation
 
@@ -13,8 +13,6 @@ time, round-robin). Use --gpus to specify which GPU IDs to use.
 Usage:
   python run_simulations.py [--start N] [--end N] [--params params.csv] [--gpus 0,1]
 
-Dependencies:
-  pip install inifix
 """
 
 import argparse

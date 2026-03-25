@@ -3,17 +3,19 @@
 ## Dependencies (Python)
 
 ```bash
-pip install inifix idefix-pytools tqdm
+pip install tqdm
 ```
 
 ## Step 1 — Generate parameter table
 
-Run once to create `params.csv` with 25 (ν, μ) pairs (2 hardcoded test cases + 23 random training cases sampled log-uniformly in [1e-5, 5e-2]):
+Run once to create `params.csv` with (ν, μ) pairs (2 hardcoded test cases + random training cases sampled log-uniformly in [1e-5, 5e-2]):
 
 ```bash
 cd simulations/idefix
-python generate_params.py
+python generate_params.py [--nsims 25] [--seed 42]
 ```
+
+By default generates 25 simulations. Use `--nsims` to change the total count.
 
 ## Step 2 — Build Idefix
 
@@ -26,10 +28,12 @@ bash build.sh
 
 Targets the RTX 3090 Ti (Ampere sm_86). Requires `$IDEFIX_DIR` to point to the Idefix source tree.
 
-## Step 3 — Run all 25 simulations sequentially
+## Step 3 — Run simulations in parallel
+
+Simulations are dispatched in parallel across GPUs (one per GPU at a time, round-robin):
 
 ```bash
-python run_simulations.py
+python run_simulations.py [--gpus 0,1]
 ```
 
 To run a subset (e.g., simulations 5 through 10):
@@ -38,14 +42,13 @@ To run a subset (e.g., simulations 5 through 10):
 python run_simulations.py --start 5 --end 10
 ```
 
-Each simulation runs in its own directory under `runs/sim_XXX/` and produces 1001 VTK snapshots (one per timestep at Δt = 0.05).
+To run with only one GPU (e.g., for testing):
 
-- Added --gpus argument (default "0,1")
-- run_simulation() now accepts a gpu_id and sets CUDA_VISIBLE_DEVICES in the subprocess
-  environment
-- Main loop replaced with ProcessPoolExecutor, assigning GPUs round-robin — so sim 0 → GPU 0, sim 1 → GPU 1, sim 2 → GPU 0, etc., with at most one simulation running per GPU at a time
+```bash
+python run_simulations.py --gpus 0
+```
 
-To run with only one GPU (e.g., for testing): python run_simulations.py --gpus 0
+Each simulation runs in its own directory under `runs/sim_XXX/` and produces 1001 VTK snapshots (one per timestep at Δt = 0.05). GPUs are assigned round-robin: sim 0 → GPU 0, sim 1 → GPU 1, sim 2 → GPU 0, etc.
 
 
 ## Step 4 — Convert VTK output to `.npy`
