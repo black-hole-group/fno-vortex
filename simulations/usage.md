@@ -1,11 +1,5 @@
 # Idefix Simulation Setup — Usage
 
-## Dependencies (Python)
-
-```bash
-pip install tqdm
-```
-
 ## Step 1 — Generate parameter table
 
 Run once to create `params.csv` with (ν, μ) pairs (2 hardcoded test cases + random training cases sampled log-uniformly in [1e-5, 5e-2]):
