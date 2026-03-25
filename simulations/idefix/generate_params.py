@@ -8,7 +8,7 @@ Generate the (nu, mu) parameter table for the Orszag-Tang vortex simulations.
 Output: params.csv with columns: sim_id, nu, mu, split
 
 Usage:
-  python generate_params.py [--seed SEED]
+  python generate_params.py [--seed SEED] [--nsims N]
 """
 
 import argparse
@@ -16,7 +16,6 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 
-N_RANDOM = 23
 LOG_LOW = np.log10(1e-5)
 LOG_HIGH = np.log10(5e-2)
 
@@ -29,11 +28,17 @@ TEST_CASES = [
 parser = argparse.ArgumentParser(description="Generate simulation parameter table")
 parser.add_argument("--seed", type=int, default=42,
                     help="Random seed for reproducibility (default: 42)")
+parser.add_argument("--nsims", type=int, default=25,
+                    help="Total number of simulations (default: 25)")
 args = parser.parse_args()
 
+n_random = args.nsims - len(TEST_CASES)
+if n_random < 0:
+    parser.error(f"--nsims must be >= {len(TEST_CASES)} (number of hardcoded test cases)")
+
 rng = np.random.default_rng(args.seed)
-nu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, N_RANDOM)
-mu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, N_RANDOM)
+nu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, n_random)
+mu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, n_random)
 
 rows = []
 sim_id = 0
