@@ -167,7 +167,8 @@ def main():
     train_counters = {p: 0 for p in FIELD_MAP.values()}
     test_counters  = {p: 0 for p in FIELD_MAP.values()}
 
-    bar = tqdm(params, desc="Converting", unit="sim") if HAS_TQDM else None
+    bar    = tqdm(params, desc="Converting", unit="sim", position=0) if HAS_TQDM else None
+    status = tqdm(total=0, bar_format="{desc}", position=1, leave=True) if HAS_TQDM else None
     iterable = bar if bar else params
 
     for row in iterable:
@@ -177,19 +178,20 @@ def main():
         split = row["split"]
         run_dir = runs_dir / f"sim_{sim_id:03d}"
 
-        if bar:
-            bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} checking")
+        if status:
+            status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} checking")
 
         if not run_dir.exists():
+            if status:
+                status.set_description_str(f"sim_{sim_id:03d} MISSING, skipped")
             if bar:
-                bar.set_postfix_str(f"sim_{sim_id:03d} MISSING, skipped")
                 bar.update(1)
             continue
 
         skip_sim = False
         for field_key, param_name in FIELD_MAP.items():
-            if bar:
-                bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} {param_name}")
+            if status:
+                status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} {param_name}")
 
             snapshots = load_all_snapshots(run_dir, field_key)
             if snapshots is None:
@@ -206,13 +208,16 @@ def main():
 
             save_npy(args.output_dir, param_name, split, idx, x, y)
 
-        if bar:
+        if status:
             if skip_sim:
-                bar.set_postfix_str(f"sim_{sim_id:03d} incomplete, skipped")
+                status.set_description_str(f"sim_{sim_id:03d} incomplete, skipped")
             else:
-                bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} done ({split})")
+                status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} done ({split})")
+        if bar:
             bar.update(1)
 
+    if status:
+        status.close()
     if bar:
         bar.close()
 
