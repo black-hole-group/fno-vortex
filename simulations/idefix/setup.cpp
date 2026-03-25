@@ -1,20 +1,16 @@
 // Orszag-Tang vortex initial conditions for Idefix
 //
-// Physical setup (from paper, n=1):
+// Physical setup:
 //   rho = 25 / (36*pi)
 //   P   = 5  / (12*pi)
-//   vx  = -sin(n*2*pi*y)
-//   vy  =  sin(n*2*pi*x)
-//   Bx  = -sin(n*2*pi*y) / sqrt(4*pi)
-//   By  =  sin(2*n*2*pi*x) / sqrt(4*pi)
-//
-// where n = n_loops (read from idefix.ini [Setup] section).
+//   vx  = -sin(2*pi*y)
+//   vy  =  sin(2*pi*x)
+//   Bx  = -sin(2*pi*y) / sqrt(4*pi)
+//   By  =  sin(4*pi*x) / sqrt(4*pi)
 //
 // The magnetic field is initialised via the vector potential Az to guarantee
 // divB = 0 from the first timestep (required by constrained transport):
-//   Az = cos(2*n*2*pi*x) / (2*n*2*pi) * B0 + cos(n*2*pi*y) / (n*2*pi) * B0
-//
-// With n=1 this reduces to the standard Orszag-Tang vortex.
+//   Az = cos(4*pi*x) / (4*pi) * B0 + cos(2*pi*y) / (2*pi) * B0
 
 #include "idefix.hpp"
 #include "setup.hpp"
@@ -22,12 +18,7 @@
 static const real pi  = M_PI;
 static const real twopi = 2.0 * pi;
 
-// Number of loops (wavenumber multiplier); read from [Setup] n_loops in idefix.ini.
-static int nloops = 1;
-
 Setup::Setup(Input &input, Grid &grid, DataBlock &data, Output &output) {
-  nloops = input.Get<int>("Setup", "n_loops", 0);
-  idfx::cout << "Setup: n_loops = " << nloops << std::endl;
 }
 
 void Setup::InitFlow(DataBlock &data) {
@@ -36,7 +27,7 @@ void Setup::InitFlow(DataBlock &data) {
   const real rho0 = 25.0 / (36.0 * pi);
   const real P0   =  5.0 / (12.0 * pi);
   const real B0   = 1.0 / std::sqrt(4.0 * pi);
-  const real n    = static_cast<real>(nloops);
+  const real n    = 1.0;
 
   for (int k = 0; k < dh.np_tot[KDIR]; k++) {
     for (int j = 0; j < dh.np_tot[JDIR]; j++) {

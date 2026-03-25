@@ -40,7 +40,7 @@ def load_params(params_file):
         return list(reader)
 
 
-def run_simulation(sim_id, nu, mu, n_loops, split, gpu_id="0"):
+def run_simulation(sim_id, nu, mu, split, gpu_id="0"):
     run_dir = RUNS_DIR / f"sim_{sim_id:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,7 +51,6 @@ def run_simulation(sim_id, nu, mu, n_loops, split, gpu_id="0"):
     text = ini_dst.read_text()
     text = re.sub(r'(viscosity\s+explicit\s+constant\s+)\S+', rf'\g<1>{float(nu):.6e}', text)
     text = re.sub(r'(resistivity\s+explicit\s+constant\s+)\S+', rf'\g<1>{float(mu):.6e}', text)
-    text = re.sub(r'(n_loops\s+)\S+', rf'\g<1>{int(n_loops)}', text)
     ini_dst.write_text(text)
 
     # Symlink the compiled binary
@@ -60,7 +59,7 @@ def run_simulation(sim_id, nu, mu, n_loops, split, gpu_id="0"):
         bin_link.unlink()
     bin_link.symlink_to(IDEFIX_BIN)
 
-    print(f"\n[sim_{sim_id:03d}] nu={float(nu):.3e}  mu={float(mu):.3e}  n_loops={int(n_loops)}  split={split}  GPU={gpu_id}")
+    print(f"\n[sim_{sim_id:03d}] nu={float(nu):.3e}  mu={float(mu):.3e}  split={split}  GPU={gpu_id}")
     print(f"  Run dir: {run_dir}")
 
     log_path = run_dir / "idefix.log"
@@ -121,7 +120,7 @@ def main():
         futures = {
             executor.submit(
                 run_simulation,
-                int(p["sim_id"]), p["nu"], p["mu"], p["n_loops"], p["split"],
+                int(p["sim_id"]), p["nu"], p["mu"], p["split"],
                 gpus[i % len(gpus)],
             ): p["sim_id"]
             for i, p in enumerate(subset)
