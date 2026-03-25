@@ -78,6 +78,7 @@ OUTPUT_SPACING = 80     # output frames spaced 80 apart → dt=4.0
 N_OUTPUT_FRAMES = 10    # 10 output frames per sample
 N_SAMPLES = 20          # 20 sliding windows per simulation
 T_IN = 10               # temporal dimension in x array (= N_SAMPLES // 2, matches model)
+MIN_SNAPSHOTS = N_INPUT_FRAMES + (N_OUTPUT_FRAMES - 1) * OUTPUT_SPACING + 1  # = 881
 
 
 def load_params(params_file):
@@ -96,6 +97,9 @@ def load_all_snapshots(run_dir, field_key):
 
     if len(vtk_files) == 0:
         raise FileNotFoundError(f"No VTK files found in {run_dir}")
+    if len(vtk_files) < MIN_SNAPSHOTS:
+        print(f"  WARNING: only {len(vtk_files)} VTK files found (need {MIN_SNAPSHOTS}), skipping")
+        return None
     if len(vtk_files) < N_SNAPSHOTS:
         print(f"  WARNING: expected {N_SNAPSHOTS} VTK files, found {len(vtk_files)}")
 
@@ -184,8 +188,12 @@ def main():
 
         print(f"\n[sim_{sim_id:03d}] nu={nu:.3e}  mu={mu:.3e}  split={split}")
 
+        skip_sim = False
         for field_key, param_name in FIELD_MAP.items():
             snapshots = load_all_snapshots(run_dir, field_key)  # (1000, 128, 128)
+            if snapshots is None:
+                skip_sim = True
+                break
             x, y = build_windows(snapshots, nu, mu)             # (20, 128, 128, 10, 7)
 
             if split == "train":
@@ -197,6 +205,10 @@ def main():
 
             save_npy(args.output_dir, param_name, split, idx, x, y)
             print(f"  {param_name:8s}: {split}/x_{idx}.npy  x={x.shape}  y={y.shape}")
+
+        if skip_sim:
+            print(f"  Skipping sim_{sim_id:03d} (incomplete)")
+            continue
 
     print("\nConversion complete.")
     print("Train file counts:", train_counters)
