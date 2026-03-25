@@ -114,19 +114,37 @@ def main():
           f"across GPU(s): {', '.join(gpus)}")
 
     failed = []
+    pending = list(subset)       # simulations still to run
+    available_gpus = list(gpus)  # GPUs currently free
+    futures = {}                 # future -> (sim_id, gpu_id)
+
     with ProcessPoolExecutor(max_workers=len(gpus)) as executor:
-        futures = {
-            executor.submit(
+        # Seed initial jobs — one per available GPU
+        while pending and available_gpus:
+            p = pending.pop(0)
+            gpu_id = available_gpus.pop(0)
+            fut = executor.submit(
                 run_simulation,
-                int(p["sim_id"]), p["nu"], p["mu"], p["split"],
-                gpus[i % len(gpus)],
-            ): p["sim_id"]
-            for i, p in enumerate(subset)
-        }
-        for future in as_completed(futures):
-            sim_id = futures[future]
-            if not future.result():
+                int(p["sim_id"]), p["nu"], p["mu"], p["split"], gpu_id,
+            )
+            futures[fut] = (p["sim_id"], gpu_id)
+
+        # As each job finishes, reclaim its GPU and dispatch the next pending sim
+        while futures:
+            done = next(as_completed(futures))
+            sim_id, gpu_id = futures.pop(done)
+            if not done.result():
                 failed.append(sim_id)
+            available_gpus.append(gpu_id)
+
+            if pending:
+                p = pending.pop(0)
+                gpu_id = available_gpus.pop(0)
+                fut = executor.submit(
+                    run_simulation,
+                    int(p["sim_id"]), p["nu"], p["mu"], p["split"], gpu_id,
+                )
+                futures[fut] = (p["sim_id"], gpu_id)
 
     print(f"\n{'='*50}")
     print(f"Completed {len(subset) - len(failed)}/{len(subset)} simulations successfully.")
