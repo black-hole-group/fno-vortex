@@ -102,7 +102,11 @@ def load_all_snapshots(run_dir, field_key):
 
     frames = []
     for vtk_path in vtk_files[:N_SNAPSHOTS]:
-        data = read_vtk(vtk_path)
+        try:
+            data = read_vtk(vtk_path)
+        except RuntimeError as e:
+            print(f"\n  WARNING: corrupted VTK file {vtk_path}: {e}")
+            return None
         field = np.array(data[field_key]).squeeze()  # (128, 128)
         frames.append(field)
 
