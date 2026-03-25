@@ -200,13 +200,13 @@ def data(bs, l, param, mode):
 
         x = np.load(os.path.join(DATA_DIR, param, 'train', 'x_'+str(bs)+'.npy'))
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
-        x = x[l:l+4]
+        x = x[l:l+8]
         x = torch.from_numpy(x).float()
         x = x.cuda()
 
         y = np.load(os.path.join(DATA_DIR, param, 'train', 'y_'+str(bs)+'.npy'))
         y = 2*((y - np.min(y))/(np.max(y) - np.min(y))) - 1
-        y = y[l:l+4]
+        y = y[l:l+8]
         y = torch.from_numpy(y).float()
         y = y.cuda()
 
@@ -214,13 +214,13 @@ def data(bs, l, param, mode):
 
         x = np.load(os.path.join(DATA_DIR, param, 'test', 'x_'+str(bs)+'.npy'))
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
-        x = x[l:l+4]
+        x = x[l:l+8]
         x = torch.from_numpy(x).float()
         x = x.cuda()
 
         y = np.load(os.path.join(DATA_DIR, param, 'test', 'y_'+str(bs)+'.npy'))
         y = 2*((y - np.min(y))/(np.max(y) - np.min(y))) - 1
-        y = y[l:l+4]
+        y = y[l:l+8]
         y = torch.from_numpy(y).float()
         y = y.cuda()
 
@@ -229,9 +229,9 @@ def data(bs, l, param, mode):
 def unormalize(l, bs, param, pred):
 
     y = np.load(os.path.join(DATA_DIR, param, 'train', 'y_'+str(bs)+'.npy'))
-    y = y[l:l+4]
+    y = y[l:l+8]
     y = torch.from_numpy(y).float()
-    y = y.cuda()   
+    y = y.cuda()
 
     pred = torch.min(y) + ((pred + 1)*(torch.max(y) - torch.min(y))/2)
     
@@ -250,7 +250,7 @@ for ep in range(epochs):
 
     for bs in range(n_train):
 
-        for l in range(0, 16, 4): 
+        for l in range(0, 16, 8):
         
             print("Epoch: "+str(ep)+" Step: "+str(bs))
 
@@ -264,7 +264,7 @@ for ep in range(epochs):
             #mse = F.mse_loss(out, y, reduction='mean')
 
             y, out = unormalize(l, bs, opt.param, out)
-            l2 = myloss(out.view(4, -1), y.view(4, -1))
+            l2 = myloss(out.view(8, -1), y.view(8, -1))
             #l2.backward()
 
             loss = mae + l2
@@ -315,7 +315,7 @@ for ep in range(epochs):
         plt.close(fig) 
         i = i + 1
 
-    train_mae /= (n_train * 16)
+    train_mae /= (n_train * 16)  # 2 steps of 8 per file
     train_loss /= (n_train * 16)
     #test_mse /= 90
 
