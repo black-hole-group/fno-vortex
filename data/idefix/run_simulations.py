@@ -27,6 +27,32 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+class Tee:
+    """Duplicate writes to both the original stdout and a log file."""
+
+    def __init__(self, filepath):
+        self._file = open(filepath, "w", buffering=1)
+        self._stdout = sys.stdout
+
+    def __enter__(self):
+        sys.stdout = self
+        return self
+
+    def __exit__(self, *args):
+        sys.stdout = self._stdout
+        self._file.close()
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+
 RUNS_DIR = SCRIPT_DIR / "runs"
 INI_TEMPLATE = SCRIPT_DIR / "idefix.ini"
 IDEFIX_BIN = SCRIPT_DIR / "idefix"
@@ -105,39 +131,26 @@ def main():
         print("Run build.sh first.")
         sys.exit(1)
 
-    params = load_params(args.params)
+    log_path = SCRIPT_DIR / "run_simulations.log"
+    print(f"Logging output to {log_path}")
 
-    end = args.end if args.end is not None else len(params) - 1
-    subset = [p for p in params if args.start <= int(p["sim_id"]) <= end]
+    with Tee(log_path):
+        params = load_params(args.params)
 
-    print(f"Running {len(subset)} simulations (sim {args.start} to {end}) "
-          f"across GPU(s): {', '.join(gpus)}")
+        end = args.end if args.end is not None else len(params) - 1
+        subset = [p for p in params if args.start <= int(p["sim_id"]) <= end]
 
-    failed = []
-    pending = list(subset)       # simulations still to run
-    available_gpus = list(gpus)  # GPUs currently free
-    futures = {}                 # future -> (sim_id, gpu_id)
+        print(f"Running {len(subset)} simulations (sim {args.start} to {end}) "
+              f"across GPU(s): {', '.join(gpus)}")
 
-    with ProcessPoolExecutor(max_workers=len(gpus)) as executor:
-        # Seed initial jobs — one per available GPU
-        while pending and available_gpus:
-            p = pending.pop(0)
-            gpu_id = available_gpus.pop(0)
-            fut = executor.submit(
-                run_simulation,
-                int(p["sim_id"]), p["nu"], p["mu"], p["split"], gpu_id,
-            )
-            futures[fut] = (p["sim_id"], gpu_id)
+        failed = []
+        pending = list(subset)       # simulations still to run
+        available_gpus = list(gpus)  # GPUs currently free
+        futures = {}                 # future -> (sim_id, gpu_id)
 
-        # As each job finishes, reclaim its GPU and dispatch the next pending sim
-        while futures:
-            done = next(as_completed(futures))
-            sim_id, gpu_id = futures.pop(done)
-            if not done.result():
-                failed.append(sim_id)
-            available_gpus.append(gpu_id)
-
-            if pending:
+        with ProcessPoolExecutor(max_workers=len(gpus)) as executor:
+            # Seed initial jobs — one per available GPU
+            while pending and available_gpus:
                 p = pending.pop(0)
                 gpu_id = available_gpus.pop(0)
                 fut = executor.submit(
@@ -146,10 +159,27 @@ def main():
                 )
                 futures[fut] = (p["sim_id"], gpu_id)
 
-    print(f"\n{'='*50}")
-    print(f"Completed {len(subset) - len(failed)}/{len(subset)} simulations successfully.")
-    if failed:
-        print(f"Failed sim_ids: {failed}")
+            # As each job finishes, reclaim its GPU and dispatch the next pending sim
+            while futures:
+                done = next(as_completed(futures))
+                sim_id, gpu_id = futures.pop(done)
+                if not done.result():
+                    failed.append(sim_id)
+                available_gpus.append(gpu_id)
+
+                if pending:
+                    p = pending.pop(0)
+                    gpu_id = available_gpus.pop(0)
+                    fut = executor.submit(
+                        run_simulation,
+                        int(p["sim_id"]), p["nu"], p["mu"], p["split"], gpu_id,
+                    )
+                    futures[fut] = (p["sim_id"], gpu_id)
+
+        print(f"\n{'='*50}")
+        print(f"Completed {len(subset) - len(failed)}/{len(subset)} simulations successfully.")
+        if failed:
+            print(f"Failed sim_ids: {failed}")
 
 
 if __name__ == "__main__":
