@@ -167,8 +167,8 @@ def main():
     train_counters = {p: 0 for p in FIELD_MAP.values()}
     test_counters  = {p: 0 for p in FIELD_MAP.values()}
 
-    bar    = tqdm(params, desc="Converting", unit="sim", position=0) if HAS_TQDM else None
-    status = tqdm(total=0, bar_format="{desc}", position=1, leave=True) if HAS_TQDM else None
+    bar    = tqdm(params, desc="Converting", unit="sim", position=1) if HAS_TQDM else None
+    status = tqdm(total=0, bar_format="{desc}", position=0, leave=True) if HAS_TQDM else None
     iterable = bar if bar else params
 
     for row in iterable:
