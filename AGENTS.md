@@ -39,7 +39,7 @@ python src/inference.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
 - Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
-- Runs over 21 test files, saves predictions to `experiments/<param>/visualizations/pred_<j>.npy`
+- Runs over all available test files (counted dynamically), saves predictions to `experiments/<param>/visualizations/pred_<j>.npy`
 - **Not autoregressive (teacher-forced):** each test file contains pre-assembled ground-truth windows. The model runs one forward pass per window; predictions are never fed back as inputs. Reported metrics reflect teacher-forced performance, not free-running rollout.
 
 ### Visualization
@@ -63,8 +63,9 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 
 ### Input Data Structure
 
-- **Training:** `data/<param>/train/[x|y]_<idx>.npy`, indices 0-89 (90 files)
-- **Test:** `data/<param>/test/[x|y]_<idx>.npy`, indices 0-20 (21 files)
+- **Training:** `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
+- **Test:** `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
+- For FARGO3D data, `<param>` includes the solver prefix, e.g. `fargo3d/density`
 - **Input shape:** `(20, 128, 128, 10, 7)` -- 20 samples, 128x128 grid, 10 frames, 7 channels
 - **Output shape:** `(20, 128, 128, 10)` -- 10 predicted frames
 
@@ -72,7 +73,7 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 
 Two numerical solvers have been used:
 
-**Idefix pipeline (`simulations/idefix/`)** — current:
+**Idefix pipeline (`data/idefix/`)** — current:
 
 1. `python generate_params.py [--seed 42] [--nsims 25]` → `params.csv` (sim_id, nu, mu, split)
    - 2 hardcoded test cases (nu=mu=5e-5 and nu=mu=3e-4), rest random log-uniform in [1e-5, 5e-2]
@@ -84,11 +85,12 @@ Two numerical solvers have been used:
    - Fields: RHO→density, VX1→vx, VX2→vy, BX1→bx, BX2→by
    - 20 sliding windows per sim; input: 5 frames spaced 20 apart; output: 10 frames spaced 80 apart from frame 160
    - nu and mu appended as channels 5–6
-   - **File count note:** 25 sims → 23 train + 2 test files per field; `train.py` expects 90 train / 21 test — adjust `--nsims` or the training loop
+   - **File count note:** 25 sims → 23 train + 2 test files per field; `train.py` and `inference.py` count files dynamically, so no code changes needed
 
 **FARGO3D** — original dataset:
 - 50 simulations, 1,000 timesteps each, domain [0, 2π]², nu=mu sampled in [1e-5, 5e-2]
 - Binary `.dat` output (16,384 values = 128×128 per field), same sliding-window conversion to `.npy`
+- Preprocessed data at `data/fargo3d/<param>/[train|test]/`; use e.g. `--param fargo3d/density`
 
 ### Normalization
 
@@ -138,7 +140,7 @@ Two numerical solvers have been used:
 - `src/architecture.py` -- model definitions
 - `src/train.py` -- training logic
 - `src/inference.py` -- inference logic
-- `src/utilities.py` -- loss functions and normalizers
+- `src/utilities.py` -- loss functions, normalizers, and `DenseNet`
 - `src/Adam.py` -- custom Adam optimizer
 - `src/visualize_results.py` -- visualization of inference results
 - `src/architecture_diagram.py` -- architecture diagram generation
@@ -153,7 +155,7 @@ Two numerical solvers have been used:
 
 4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
-5. **Preprocessing script:** `simulations/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
+5. **Preprocessing script:** `data/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
 
 6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 

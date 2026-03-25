@@ -75,13 +75,14 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 ## Data Pipeline
 
 **Input data structure:**
-- Training data: `data/<param>/train/[x|y]_<idx>.npy`, indices 0–89 (90 files)
-- Test data: `data/<param>/test/[x|y]_<idx>.npy`, indices 0–20 (21 files)
+- Training data: `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
+- Test data: `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
+- For the FARGO3D dataset, `<param>` includes the solver prefix, e.g. `fargo3d/density`
 - Each `x` file has shape `(20, 128, 128, 10, 7)` — 20 samples, 128×128 spatial grid, 10 temporal frames, 7 channels
 - Each `y` file has shape `(20, 128, 128, 10)` — same samples, 10 output frames
 
 **Batch construction:**
-- Training iterates over 90 files; within each file, samples are loaded in slices of 4 (`l:l+4` for l in 0, 4, 8, 12), giving 4 gradient steps per file
+- Training iterates over all available files (counted dynamically); within each file, samples are loaded in slices of 4 (`l:l+4` for l in 0, 4, 8, 12), giving 4 gradient steps per file
 - Effective batch size per gradient update: **4 samples**
 
 **Normalization (`train.py` and `inference.py`):**
@@ -103,6 +104,7 @@ Training combines two losses:
 - `FrequencyLoss`: Compares log power spectra in Fourier space
 - `UnitGaussianNormalizer`, `GaussianNormalizer`, `RangeNormalizer`: alternative normalizers (not used in current training loop)
 - `MatReader`: utility for loading `.mat` files (legacy, not used for current `.npy` data)
+- `DenseNet`: simple feedforward neural network (not used in current training loop)
 
 **Known naming issue:** `train.py` imports via `from utilities3 import *` but the file is `src/utilities.py`. This must match for training to run.
 
@@ -116,9 +118,9 @@ Training combines two losses:
 
 ## Data Generation
 
-### Idefix pipeline (`simulations/idefix/`)
+### Idefix pipeline (`data/idefix/`)
 
-The current data generation pipeline uses Idefix. All scripts live in `simulations/idefix/`.
+The current data generation pipeline uses Idefix. All scripts live in `data/idefix/`.
 
 **Step 1 — generate parameter table:**
 ```bash
@@ -154,13 +156,15 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 - Appends ν and μ as channels 5–6 of `x`, broadcast over (128, 128, 10)
 - Writes `data/<param>/[train|test]/[x|y]_<idx>.npy`
 
-**Note on file counts:** with 25 simulations (23 train + 2 test), `convert_to_npy.py` produces 23 train files and 2 test files per field. The current `train.py` loop expects 90 train files and `inference.py` expects 21 test files — adjust `--nsims` or the training loop accordingly.
+**Note on file counts:** with 25 simulations (23 train + 2 test), `convert_to_npy.py` produces 23 train files and 2 test files per field. Both `train.py` and `inference.py` dynamically count available files, so no code changes are needed when the number of simulations changes.
 
 ### FARGO3D (original dataset)
 
 **Raw output:** binary `.dat` files, one per field per timestep; flat vector of 16,384 values (128×128). 50 simulations total, each 1,000 timesteps, ν=μ sampled in [10⁻⁵, 5×10⁻²]. 48 train, 2 test.
 
 **Conversion to `.npy`:** same sliding-window logic as the Idefix pipeline above. Some of the files are located in `data/fargo3d`, with notes about their preprocessed structure in `data/fargo3d/README.md`.
+
+**FARGO3D data path:** preprocessed `.npy` files live under `data/fargo3d/<param>/[train|test]/`. To train on FARGO3D data pass e.g. `--param fargo3d/density`.
 
 ## Physical Context
 
@@ -178,3 +182,5 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 - The time dimension is padded by 6 before the Fourier layers and unpadded after (`x[..., :-self.padding]`)
 - Spatial dimensions are not padded (the Orszag–Tang problem has periodic spatial boundaries)
 - `architecture.py` and `train.py` contain duplicate definitions of `FNO3d` and `SpectralConv3d`; `inference.py` imports from `architecture.py`
+- `src/architecture_diagram.py`: standalone matplotlib script to generate an architecture diagram (not part of training/inference pipeline)
+- Idefix simulation source files (`setup.cpp`, `definitions.hpp`, `idefix.ini`, `Makefile`) live in `data/idefix/` alongside the pipeline scripts
