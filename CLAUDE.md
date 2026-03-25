@@ -12,6 +12,8 @@ Two numerical solvers have been used to generate training data:
 
 The paper associated with this codebase is `paper/main.tex`.
 
+Purpose of current branch can be found in `THIS_BRANCH.md`.
+
 ## Training and Inference
 
 **Training a model:**
@@ -158,7 +160,7 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 
 **Raw output:** binary `.dat` files, one per field per timestep; flat vector of 16,384 values (128×128). 50 simulations total, each 1,000 timesteps, ν=μ sampled in [10⁻⁵, 5×10⁻²]. 48 train, 2 test.
 
-**Conversion to `.npy`:** same sliding-window logic as the Idefix pipeline above.
+**Conversion to `.npy`:** same sliding-window logic as the Idefix pipeline above. Some of the files are located in `data/fargo3d`, with notes about their preprocessed structure in `data/fargo3d/README.md`.
 
 ## Physical Context
 

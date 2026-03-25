@@ -6,7 +6,7 @@ This file contains guidelines for agentic coding agents working in this reposito
 
 This is a PyTorch implementation of a 3D Fourier Neural Operator (FNO) for simulating 2D magnetohydrodynamic (MHD) turbulence. The specific problem is the **Orszag-Tang vortex**, a standard MHD benchmark. The model learns to predict future plasma dynamics (density, velocity, magnetic fields) from initial simulation frames and physical parameters (kinematic viscosity nu, Ohmic diffusivity eta).
 
-The paper associated with this codebase is `paper/main.tex`. Detailed documentation is in `CLAUDE.md`.
+The paper associated with this codebase is `paper/main.tex`. Detailed documentation is in `CLAUDE.md`. Purpose of current branch can be found in `THIS_BRANCH.md`.
 
 ## Training and Inference
 
