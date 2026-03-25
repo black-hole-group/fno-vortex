@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a PyTorch implementation of a 3D Fourier Neural Operator (FNO) for simulating 2D magnetohydrodynamic (MHD) turbulence. The specific problem is the **Orszag–Tang vortex**, a standard MHD benchmark solved with the FARGO3D finite-difference code. The model learns to map a short initial window of simulation frames (plus physical parameters) to future states for physical quantities such as density, velocity components, and magnetic field components.
+This is a PyTorch implementation of a 3D Fourier Neural Operator (FNO) for simulating 2D magnetohydrodynamic (MHD) turbulence. The specific problem is the **Orszag–Tang vortex**, a standard MHD benchmark. The model learns to map a short initial window of simulation frames (plus physical parameters) to future states for physical quantities such as density, velocity components, and magnetic field components.
+
+Two numerical solvers have been used to generate training data:
+- **FARGO3D** (finite-difference, GPU-accelerated) — original dataset, domain [0, 2π]², 128×128 grid
+- **Idefix** (Godunov finite-volume, GPU-accelerated) — newer dataset, domain [0, 1]², 128×128 grid
 
 The paper associated with this codebase is `paper/main.tex`.
 
@@ -110,16 +114,56 @@ Training combines two losses:
 
 ## Data Generation
 
-**Raw FARGO3D output:** each simulation produces binary `.dat` files, one per field component per timestep. Each file contains a flat vector of 16,384 values (= 128×128) that must be reshaped into a 2D array.
+### Idefix pipeline (`simulations/idefix/`)
 
-**FARGO3D setup:** the Orszag–Tang vortex is a built-in problem in FARGO3D. Viscosity ν and diffusivity μ are set via the parameter file. 50 simulations were run in total, each for 1,000 timesteps, sampling ν = μ across [10⁻⁵, 5×10⁻²]. 48 simulations are used for training/validation and 2 are held out for testing (ν = μ = 5×10⁻⁵ and ν = μ = 3×10⁻⁴).
+The current data generation pipeline uses Idefix. All scripts live in `simulations/idefix/`.
 
-**Conversion to `.npy`:** a preprocessing script (**location TBD**) reads the binary FARGO3D outputs, reshapes them to 128×128, assembles the sliding-window input/output blocks, appends ν and μ as the last 2 channels of `x`, and writes the paired `x_<idx>.npy` / `y_<idx>.npy` files consumed by `train.py`. The resulting shapes are `(20, 128, 128, 10, 7)` for `x` and `(20, 128, 128, 10)` for `y`.
+**Step 1 — generate parameter table:**
+```bash
+python generate_params.py [--seed 42] [--nsims 25]
+```
+- Writes `params.csv` with columns `sim_id, nu, mu, split`
+- 2 hardcoded test cases (ν=μ=5×10⁻⁵ and ν=μ=3×10⁻⁴), remainder random log-uniform in [10⁻⁵, 5×10⁻²]
+
+**Step 2 — build Idefix binary** (once):
+```bash
+# Requires $IDEFIX_DIR set to Idefix source tree
+bash build.sh
+```
+Builds with MHD + CUDA enabled (Pascal sm_60 arch).
+
+**Step 3 — run simulations:**
+```bash
+python run_simulations.py [--params params.csv] [--start N] [--end N] [--gpus 0,1]
+```
+- Creates `runs/sim_XXX/` per simulation, patches `idefix.ini` with ν and μ, runs Idefix
+- Dispatches simulations in parallel across GPUs (round-robin)
+- Each simulation produces ~1001 VTK files (`data.0000.vtk` … `data.1000.vtk`), dt=0.05, tstop=50
+
+**Step 4 — convert VTK to `.npy`:**
+```bash
+python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir ../../data]
+```
+- Reads VTK files via `idefix-pytools` (`pip install idefix-pytools`)
+- Fields extracted: `RHO→density`, `VX1→vx`, `VX2→vy`, `BX1→bx`, `BX2→by`
+- Builds 20 sliding-window samples per simulation (start frame shifts by 1 each sample)
+  - Input: 5 frames spaced 20 apart from frames 0–159 (dt=1.0 code units)
+  - Output: 10 frames spaced 80 apart starting at frame 160 (dt=4.0 code units)
+- Appends ν and μ as channels 5–6 of `x`, broadcast over (128, 128, 10)
+- Writes `data/<param>/[train|test]/[x|y]_<idx>.npy`
+
+**Note on file counts:** with 25 simulations (23 train + 2 test), `convert_to_npy.py` produces 23 train files and 2 test files per field. The current `train.py` loop expects 90 train files and `inference.py` expects 21 test files — adjust `--nsims` or the training loop accordingly.
+
+### FARGO3D (original dataset)
+
+**Raw output:** binary `.dat` files, one per field per timestep; flat vector of 16,384 values (128×128). 50 simulations total, each 1,000 timesteps, ν=μ sampled in [10⁻⁵, 5×10⁻²]. 48 train, 2 test.
+
+**Conversion to `.npy`:** same sliding-window logic as the Idefix pipeline above.
 
 ## Physical Context
 
-- **Problem:** 2D Orszag–Tang vortex on a 128×128 periodic spatial grid, domain [0, 2π] × [0, 2π]
-- **Numerical solver:** FARGO3D (finite-difference, GPU-accelerated, constrained transport for ∇·B=0)
+- **Problem:** 2D Orszag–Tang vortex on a 128×128 periodic spatial grid
+- **Numerical solvers:** FARGO3D (domain [0, 2π]²) and Idefix (domain [0, 1]², HLLD solver, UCT contact EMF, γ=5/3)
 - **Key parameters:** kinematic viscosity ν and Ohmic diffusivity η (referred to as μ in some parts of the code), sampled in [10⁻⁵, 5×10⁻²]
 - **Training regime:** model is conditioned on the first ~160 frames (≈ 0.73 Alfvén times) and predicts frames 160–1000 (≈ 0.73–4.39 Alfvén times)
 - **Test cases (held out):** ν = μ = 5×10⁻⁵ and ν = μ = 3×10⁻⁴
