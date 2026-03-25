@@ -98,16 +98,10 @@ def load_all_snapshots(run_dir, field_key):
     if len(vtk_files) == 0:
         raise FileNotFoundError(f"No VTK files found in {run_dir}")
     if len(vtk_files) < MIN_SNAPSHOTS:
-        print(f"  WARNING: only {len(vtk_files)} VTK files found (need {MIN_SNAPSHOTS}), skipping")
         return None
-    if len(vtk_files) < N_SNAPSHOTS:
-        print(f"  WARNING: expected {N_SNAPSHOTS} VTK files, found {len(vtk_files)}")
 
     frames = []
-    iter_files = tqdm(vtk_files[:N_SNAPSHOTS], desc="  Reading VTK", leave=False) \
-        if HAS_TQDM else vtk_files[:N_SNAPSHOTS]
-
-    for vtk_path in iter_files:
+    for vtk_path in vtk_files[:N_SNAPSHOTS]:
         data = read_vtk(vtk_path)
         field = np.array(data[field_key]).squeeze()  # (128, 128)
         frames.append(field)
@@ -173,28 +167,35 @@ def main():
     train_counters = {p: 0 for p in FIELD_MAP.values()}
     test_counters  = {p: 0 for p in FIELD_MAP.values()}
 
-    outer = tqdm(params, desc="Simulations") if HAS_TQDM else params
+    bar = tqdm(params, desc="Converting", unit="sim") if HAS_TQDM else None
+    iterable = bar if bar else params
 
-    for row in outer:
+    for row in iterable:
         sim_id = int(row["sim_id"])
         nu = float(row["nu"])
         mu = float(row["mu"])
         split = row["split"]
         run_dir = runs_dir / f"sim_{sim_id:03d}"
 
-        if not run_dir.exists():
-            print(f"WARNING: {run_dir} not found, skipping sim {sim_id}")
-            continue
+        if bar:
+            bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} checking")
 
-        print(f"\n[sim_{sim_id:03d}] nu={nu:.3e}  mu={mu:.3e}  split={split}")
+        if not run_dir.exists():
+            if bar:
+                bar.set_postfix_str(f"sim_{sim_id:03d} MISSING, skipped")
+                bar.update(1)
+            continue
 
         skip_sim = False
         for field_key, param_name in FIELD_MAP.items():
-            snapshots = load_all_snapshots(run_dir, field_key)  # (1000, 128, 128)
+            if bar:
+                bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} {param_name}")
+
+            snapshots = load_all_snapshots(run_dir, field_key)
             if snapshots is None:
                 skip_sim = True
                 break
-            x, y = build_windows(snapshots, nu, mu)             # (20, 128, 128, 10, 7)
+            x, y = build_windows(snapshots, nu, mu)
 
             if split == "train":
                 idx = train_counters[param_name]
@@ -204,11 +205,16 @@ def main():
                 test_counters[param_name] += 1
 
             save_npy(args.output_dir, param_name, split, idx, x, y)
-            print(f"  {param_name:8s}: {split}/x_{idx}.npy  x={x.shape}  y={y.shape}")
 
-        if skip_sim:
-            print(f"  Skipping sim_{sim_id:03d} (incomplete)")
-            continue
+        if bar:
+            if skip_sim:
+                bar.set_postfix_str(f"sim_{sim_id:03d} incomplete, skipped")
+            else:
+                bar.set_postfix_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} done ({split})")
+            bar.update(1)
+
+    if bar:
+        bar.close()
 
     print("\nConversion complete.")
     print("Train file counts:", train_counters)
