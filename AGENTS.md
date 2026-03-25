@@ -70,13 +70,25 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 
 ### Data Generation
 
-Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
+Two numerical solvers have been used:
 
-- 50 simulations, each with 1,000 timesteps
-- Parameters: nu = mu sampled in [1e-5, 5e-2]
-- Test cases (held out): nu = mu = 5e-5 and nu = mu = 3e-4
-- FARGO3D outputs binary `.dat` files (16,384 values = 128x128 per field)
-- A preprocessing script (**location TBD**) converts `.dat` to `.npy` format, assembling sliding-window input/output blocks with nu and mu appended as the last 2 channels
+**Idefix pipeline (`simulations/idefix/`)** — current:
+
+1. `python generate_params.py [--seed 42] [--nsims 25]` → `params.csv` (sim_id, nu, mu, split)
+   - 2 hardcoded test cases (nu=mu=5e-5 and nu=mu=3e-4), rest random log-uniform in [1e-5, 5e-2]
+2. `bash build.sh` — builds Idefix binary (requires `$IDEFIX_DIR`, CUDA, MHD enabled)
+3. `python run_simulations.py [--params params.csv] [--gpus 0,1]` — runs sims in parallel across GPUs
+   - Each sim produces ~1001 VTK files in `runs/sim_XXX/`, dt=0.05, tstop=50
+4. `python convert_to_npy.py [--runs-dir runs] [--output-dir ../../data]` → `data/<param>/[train|test]/[x|y]_<idx>.npy`
+   - Requires `pip install idefix-pytools`
+   - Fields: RHO→density, VX1→vx, VX2→vy, BX1→bx, BX2→by
+   - 20 sliding windows per sim; input: 5 frames spaced 20 apart; output: 10 frames spaced 80 apart from frame 160
+   - nu and mu appended as channels 5–6
+   - **File count note:** 25 sims → 23 train + 2 test files per field; `train.py` expects 90 train / 21 test — adjust `--nsims` or the training loop
+
+**FARGO3D** — original dataset:
+- 50 simulations, 1,000 timesteps each, domain [0, 2π]², nu=mu sampled in [1e-5, 5e-2]
+- Binary `.dat` output (16,384 values = 128×128 per field), same sliding-window conversion to `.npy`
 
 ### Normalization
 
@@ -141,7 +153,7 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 
 4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
-5. **Preprocessing script missing:** The script that converts FARGO3D `.dat` outputs to `.npy` format is not in this repository (location TBD).
+5. **Preprocessing script:** `simulations/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
 
 6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 
