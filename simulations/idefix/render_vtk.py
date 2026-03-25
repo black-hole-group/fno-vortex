@@ -30,6 +30,7 @@ import matplotlib
 matplotlib.use("Agg")
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from matplotlib.colors import SymLogNorm
 
 # ── locate Idefix pytools/vtk_io.py ───────────────────────────────────────────
 _idefix_dir = os.environ.get("IDEFIX_DIR")
@@ -78,7 +79,16 @@ def compute_clims(vtk_files: list) -> dict:
     }
 
 
-def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
+def _make_norm(vmin: float, vmax: float, per_frame: bool):
+    """Return a matplotlib norm: SymLogNorm (default) or linear (per-frame)."""
+    if per_frame:
+        return None  # pcolormesh uses vmin/vmax directly → linear
+    linthresh = max(vmin, vmax * 1e-4, 1e-10)
+    return SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax)
+
+
+def render_frame(vtk_path: Path, out_path: Path, clims: dict | None,
+                 per_frame: bool = False) -> None:
     V = readVTK(str(vtk_path))
 
     # 2D fields: (nx, ny, nz=1) → (nx, ny)
@@ -87,6 +97,18 @@ def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
     vy  = V.data["VX2"][:, :, 0]
     bx  = V.data["BX1"][:, :, 0]
     by  = V.data["BX2"][:, :, 0]
+
+    bmag = np.sqrt(bx**2 + by**2)
+    vmag = np.sqrt(vx**2 + vy**2)
+
+    if per_frame:
+        frame_clims = {
+            "rho":  (rho.min(),  rho.max()),
+            "bmag": (bmag.min(), bmag.max()),
+            "vmag": (vmag.min(), vmag.max()),
+        }
+    else:
+        frame_clims = clims
 
     x, y = V.x, V.y
     X, Y = np.meshgrid(x, y, indexing="ij")   # (nx, ny)
@@ -101,8 +123,14 @@ def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
 
     # Panel 1: density
     ax = axes[0]
-    im = ax.pcolormesh(x, y, rho.T, cmap="inferno", shading="auto",
-                       vmin=clims["rho"][0], vmax=clims["rho"][1])
+    lo, hi = frame_clims["rho"]
+    norm = _make_norm(lo, hi, per_frame)
+    kw = dict(cmap="inferno", shading="auto")
+    if norm is not None:
+        kw["norm"] = norm
+    else:
+        kw["vmin"], kw["vmax"] = lo, hi
+    im = ax.pcolormesh(x, y, rho.T, **kw)
     fig.colorbar(im, ax=ax)
     ax.set_title(r"Density  $\rho$")
     ax.set_aspect("equal")
@@ -111,9 +139,14 @@ def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
 
     # Panel 2: magnetic field magnitude + vectors
     ax = axes[1]
-    bmag = np.sqrt(bx**2 + by**2)
-    im = ax.pcolormesh(x, y, bmag.T, cmap="cividis", shading="auto",
-                       vmin=clims["bmag"][0], vmax=clims["bmag"][1])
+    lo, hi = frame_clims["bmag"]
+    norm = _make_norm(lo, hi, per_frame)
+    kw = dict(cmap="cividis", shading="auto")
+    if norm is not None:
+        kw["norm"] = norm
+    else:
+        kw["vmin"], kw["vmax"] = lo, hi
+    im = ax.pcolormesh(x, y, bmag.T, **kw)
     fig.colorbar(im, ax=ax, label="|B|")
     ax.quiver(Xq, Yq, bxq, byq, color="white", alpha=0.8, pivot="mid")
     ax.set_title(r"Magnetic field  $\mathbf{B}$")
@@ -123,9 +156,14 @@ def render_frame(vtk_path: Path, out_path: Path, clims: dict) -> None:
 
     # Panel 3: velocity magnitude + vectors
     ax = axes[2]
-    vmag = np.sqrt(vx**2 + vy**2)
-    im = ax.pcolormesh(x, y, vmag.T, cmap="viridis", shading="auto",
-                       vmin=clims["vmag"][0], vmax=clims["vmag"][1])
+    lo, hi = frame_clims["vmag"]
+    norm = _make_norm(lo, hi, per_frame)
+    kw = dict(cmap="viridis", shading="auto")
+    if norm is not None:
+        kw["norm"] = norm
+    else:
+        kw["vmin"], kw["vmax"] = lo, hi
+    im = ax.pcolormesh(x, y, vmag.T, **kw)
     fig.colorbar(im, ax=ax, label="|v|")
     ax.quiver(Xq, Yq, vxq, vyq, color="white", alpha=0.8, pivot="mid")
     ax.set_title(r"Velocity field  $\mathbf{v}$")
@@ -149,6 +187,8 @@ def main():
                         help="Render every Nth VTK file (default: 1)")
     parser.add_argument("--output", default=None,
                         help="Output movie path (default: <sim_dir>/movie.mp4)")
+    parser.add_argument("--per-frame", action="store_true",
+                        help="Per-frame linear normalization instead of log scale")
     args = parser.parse_args()
 
     sim_dir = Path(args.sim_dir).resolve()
@@ -162,7 +202,12 @@ def main():
         sys.exit(1)
 
     print(f"Found {len(vtk_files)} VTK files.")
-    clims = compute_clims(vtk_files)
+    if args.per_frame:
+        clims = None
+        print("Colorscale: per-frame linear normalization")
+    else:
+        clims = compute_clims(vtk_files)
+        print("Colorscale: global SymLogNorm (use --per-frame for linear per-frame)")
 
     print(f"Rendering frames to {frames_dir}/")
     frame_paths = []
@@ -170,7 +215,7 @@ def main():
         for i, vtk in enumerate(pbar):
             out = frames_dir / f"frame_{i:04d}.png"
             pbar.set_postfix_str(f"{vtk.name} → {out.name}")
-            render_frame(vtk, out, clims)
+            render_frame(vtk, out, clims, per_frame=args.per_frame)
             frame_paths.append(out)
 
     out_movie = Path(args.output) if args.output else sim_dir / "movie.mp4"
