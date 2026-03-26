@@ -69,7 +69,7 @@ def main():
 
     torch.backends.cudnn.benchmark = True
     model = FNO3d(64, 64, 5, 30).cuda()
-    model = torch.compile(model)
+    # model = torch.compile(model)  # not supported on Python 3.14+
     optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step, gamma=scheduler_gamma)
     scaler = torch.amp.GradScaler('cuda')
