@@ -65,7 +65,7 @@ def main():
     scheduler_step = 500
     scheduler_gamma = 0.5
     epochs = 10000
-    batch_size = 4
+    batch_size = 16
 
     model = FNO3d(64, 64, 5, 30).cuda()
     optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
@@ -102,8 +102,8 @@ def main():
         log.write(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}\n")
         log.write(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})\n")
         log.write(f"{'='*70}\n")
-        log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}\n")
-        log.write(f"{'-'*70}\n")
+        log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}  {'eta':>12}\n")
+        log.write(f"{'-'*84}\n")
 
     myloss = LpLoss(size_average=False)
     loss_function = []
@@ -181,10 +181,15 @@ def main():
 
         t2 = default_timer()
         lr_now = scheduler.get_last_lr()[0]
+        avg_epoch_time = (t2 - t1_final) / (ep + 1)
+        eta_sec = int(avg_epoch_time * (epochs - ep - 1))
+        eh, erem = divmod(eta_sec, 3600)
+        em, es = divmod(erem, 60)
+        eta_str = f"{eh}h {em}m {es}s"
         log10_mae_history.append(np.log10(train_mae))
         chart = asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'})
         output = (
-            f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}\n"
+            f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}  |  ETA: {eta_str}\n"
             f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}\n"
             f"{chart}\n"
             f"  log10(MAE): {log10_mae_history[-1]:.3f}"
@@ -200,7 +205,7 @@ def main():
         loss_function.append(train_loss)
 
         with open(log_path, 'a') as log:
-            log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}\n")
+            log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
 
         np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
         torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
