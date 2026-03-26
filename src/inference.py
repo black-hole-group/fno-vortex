@@ -4,7 +4,7 @@ import argparse
 from timeit import default_timer
 from tqdm import tqdm
 
-from architecture import *
+from architecture import FNO3d
 
 import os
 
@@ -16,47 +16,53 @@ ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 DATA_DIR = os.path.join(ROOT_DIR, 'data')
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--param", type=str, default='density')
-parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
-opt = parser.parse_args()
 
-exp_dir = opt.experiments_dir
-vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
-os.makedirs(vis_dir, exist_ok=True)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--param", type=str, default='density')
+    parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
+    opt = parser.parse_args()
 
-print(f"Processing parameter: {opt.param}")
+    exp_dir = opt.experiments_dir
+    vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
+    os.makedirs(vis_dir, exist_ok=True)
 
-model = FNO3d(64, 64, 5, 30).cuda()
-model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'), weights_only=True))
-model.eval()
+    print(f"Processing parameter: {opt.param}")
 
-test_dir = os.path.join(DATA_DIR, opt.param, 'test')
-n_test = sum(1 for f in os.listdir(test_dir) if f.startswith('x_') and f.endswith('.npy'))
+    model = FNO3d(64, 64, 5, 30).cuda()
+    model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'), weights_only=True))
+    model.eval()
 
-print(f"Test data directory: {test_dir}")
-print(f"Output directory: {vis_dir}")
-print(f"Loading model from: {os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')}")
+    test_dir = os.path.join(DATA_DIR, opt.param, 'test')
+    n_test = sum(1 for f in os.listdir(test_dir) if f.startswith('x_') and f.endswith('.npy'))
 
-t1 = default_timer()
-print(f"\nRunning inference on {n_test} test files...")
+    print(f"Test data directory: {test_dir}")
+    print(f"Output directory: {vis_dir}")
+    print(f"Loading model from: {os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')}")
 
-with torch.no_grad():
-    for j in tqdm(range(n_test), desc="Inference", unit="file"):
-        x = np.load(os.path.join(test_dir, 'x_'+str(j)+'.npy'))
-        x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
-        x = torch.from_numpy(x).float().cuda()
+    t1 = default_timer()
+    print(f"\nRunning inference on {n_test} test files...")
 
-        out = model(x).cpu().numpy()
+    with torch.no_grad():
+        for j in tqdm(range(n_test), desc="Inference", unit="file"):
+            x = np.load(os.path.join(test_dir, 'x_'+str(j)+'.npy'))
+            x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
+            x = torch.from_numpy(x).float().cuda()
 
-        del x
+            out = model(x).cpu().numpy()
 
-        y = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))
-        out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
+            del x
 
-        np.save(os.path.join(vis_dir, 'pred_'+str(j)+'.npy'), out)
+            y = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))
+            out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
 
-t2 = default_timer()
+            np.save(os.path.join(vis_dir, 'pred_'+str(j)+'.npy'), out)
 
-print(f"\nInference completed in {t2-t1:.2f}s")
-print(f"Saved {n_test} predictions to {vis_dir}/")
+    t2 = default_timer()
+
+    print(f"\nInference completed in {t2-t1:.2f}s")
+    print(f"Saved {n_test} predictions to {vis_dir}/")
+
+
+if __name__ == '__main__':
+    main()

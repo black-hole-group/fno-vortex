@@ -73,13 +73,14 @@ cd src
 python train.py --param <parameter_name>
 ```
 
-**Available parameters:**
+**Available parameters (Idefix dataset):**
 - `density` - Gas density
+- `vx` - Gas velocity (x-component)
 - `vy` - Gas velocity (y-component)
-- `vz` - Gas velocity (z-component)
+- `bx` - Magnetic field (x-component)
 - `by` - Magnetic field (y-component)
-- `bz` - Magnetic field (z-component)
-- `br` - Magnetic field (radial component)
+
+*FARGO3D dataset additionally includes `vz`, `bz`, `br`; pass e.g. `--param fargo3d/density`.*
 
 **Example:**
 ```bash

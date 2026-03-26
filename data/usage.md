@@ -5,7 +5,7 @@
 Run once to create `params.csv` with (ν, μ) pairs (2 hardcoded test cases + random training cases sampled log-uniformly in [1e-5, 5e-2]):
 
 ```bash
-cd simulations/idefix
+cd data/idefix
 python generate_params.py [--nsims 25] [--seed 42]
 ```
 
@@ -13,14 +13,14 @@ By default generates 25 simulations. Use `--nsims` to change the total count.
 
 ## Step 2 — Build Idefix
 
-From the `simulations/idefix/` directory:
+From the `data/idefix/` directory:
 
 ```bash
 export IDEFIX_DIR=/path/to/idefix
 bash build.sh
 ```
 
-Targets the RTX 3090 Ti (Ampere sm_86). Requires `$IDEFIX_DIR` to point to the Idefix source tree.
+Targets Pascal GPUs (sm_60, e.g. Quadro GP100/P6000). Requires `$IDEFIX_DIR` to point to the Idefix source tree.
 
 ## Step 3 — Run simulations in parallel
 

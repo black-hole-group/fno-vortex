@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build Idefix for GPU (Quadro GP100 = Pascal sm_60, Quadro P6000 = Pascal sm_61)
 # sm_60 code is forward-compatible with sm_61, so one arch flag covers both GPUs.
-# Run this from the simulations/idefix/ directory.
+# Run this from the data/idefix/ directory.
 # Requires: $IDEFIX_DIR to point to the Idefix source tree.
 
 set -e
