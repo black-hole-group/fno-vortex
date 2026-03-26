@@ -8,6 +8,7 @@ from timeit import default_timer
 from torch.optim import Adam
 import os
 from pathlib import Path
+from datetime import datetime
 import asciichartpy
 
 from architecture import FNO3d
@@ -90,6 +91,20 @@ def main():
     print(f"  Param: {opt.param}")
     print(f"{'='*55}\n")
 
+    log_path = os.path.join(exp_dir, opt.param, 'checkpoints', 'train.log')
+    with open(log_path, 'a') as log:
+        log.write(f"\n{'='*70}\n")
+        log.write(f"  Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"  Param: {opt.param}\n")
+        log.write(f"  FNO3d(modes=64/64/5, width=30)  |  Parameters: {n_params:,}\n")
+        log.write(f"  Input shape: {tuple(x0_shape)}  |  Output shape: {tuple(y0_shape)}\n")
+        log.write(f"  Train files: {n_train}  |  Test files: {n_test}\n")
+        log.write(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}\n")
+        log.write(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})\n")
+        log.write(f"{'='*70}\n")
+        log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}\n")
+        log.write(f"{'-'*70}\n")
+
     myloss = LpLoss(size_average=False)
     loss_function = []
     log10_mae_history = []
@@ -167,13 +182,25 @@ def main():
         t2 = default_timer()
         lr_now = scheduler.get_last_lr()[0]
         log10_mae_history.append(np.log10(train_mae))
-        print(f"\nEpoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}")
-        print(f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}")
-        print(asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'}))
-        print(f"  log10(MAE): {log10_mae_history[-1]:.3f}")
+        chart = asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'})
+        output = (
+            f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}\n"
+            f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}\n"
+            f"{chart}\n"
+            f"  log10(MAE): {log10_mae_history[-1]:.3f}"
+        )
+        n_lines = output.count('\n') + 1
+        # Move cursor up to overwrite previous epoch's output
+        if ep > 0:
+            print(f"\033[{prev_n_lines}A\033[J", end='')
+        print(output)
+        prev_n_lines = n_lines
 
         loss_function.append(train_mae)
         loss_function.append(train_loss)
+
+        with open(log_path, 'a') as log:
+            log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}\n")
 
         np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
         torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
@@ -184,6 +211,9 @@ def main():
     h, rem = divmod(int(elapsed), 3600)
     m, s = divmod(rem, 60)
     print(f"\nTraining complete. Total time: {h}h {m}m {s}s")
+    with open(log_path, 'a') as log:
+        log.write(f"{'-'*70}\n")
+        log.write(f"  Run finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  Total time: {h}h {m}m {s}s\n")
 
 
 if __name__ == '__main__':
