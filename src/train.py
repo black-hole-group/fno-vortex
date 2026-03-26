@@ -3,6 +3,8 @@ import numpy as np
 import torch.nn.functional as F
 import argparse
 from contextlib import nullcontext
+import shutil
+import sys
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from timeit import default_timer
@@ -47,6 +49,27 @@ def load_dataset(param, split):
 
         cache.append((x, y_norm, y_min, y_max))
     return cache
+
+
+def compress_series(values, max_points):
+    if len(values) <= max_points:
+        return values
+
+    edges = np.linspace(0, len(values), max_points + 1, dtype=int)
+    compressed = []
+    for idx in range(max_points):
+        start = edges[idx]
+        end = edges[idx + 1]
+        if start < end:
+            compressed.append(float(np.mean(values[start:end])))
+    return compressed
+
+
+def visual_line_count(text, cols):
+    total = 0
+    for line in text.splitlines() or [""]:
+        total += max(1, (len(line) + cols - 1) // cols)
+    return total
 
 
 def main():
@@ -258,16 +281,23 @@ def main():
             em, es = divmod(erem, 60)
             eta_str = f"{eh}h {em}m {es}s"
             log10_mae_history.append(np.log10(train_mae))
-            chart = asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'})
+            cols = shutil.get_terminal_size(fallback=(100, 24)).columns
+            chart_cols = max(20, cols - 12)
+            chart_history = compress_series(log10_mae_history[-100:], chart_cols)
+            chart = asciichartpy.plot(
+                chart_history,
+                {'height': 8, 'format': '{:6.2f}', 'offset': 2},
+            )
+            eta_compact = f"{eh:02d}:{em:02d}:{es:02d}"
             output = (
-                f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}  |  ETA: {eta_str}\n"
-                f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}\n"
+                f"Ep {ep+1}/{epochs} | {t2-t1:.1f}s | lr {lr_now:.2e} | ETA {eta_compact}\n"
+                f"MAE {train_mae:.4e} | Loss {train_loss:.4e}\n"
                 f"{chart}\n"
                 f"  log10(MAE): {log10_mae_history[-1]:.3f}"
             )
-            n_lines = output.count('\n') + 1
+            n_lines = visual_line_count(output, cols)
             # Move cursor up to overwrite previous epoch's output
-            if ep > start_epoch:
+            if ep > start_epoch and sys.stdout.isatty():
                 print(f"\033[{prev_n_lines}A\033[J", end='')
             print(output)
             prev_n_lines = n_lines
