@@ -26,7 +26,7 @@ DATA_DIR        = os.path.join(ROOT_DIR, 'data')
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
 
-def load_dataset(param, split):
+def load_dataset(param, split, max_files=None, max_samples=None):
     """Load and normalize all .npy files for a dataset split into memory.
 
     Returns a list of tuples (x_normalized, y_normalized, y_min, y_max).
@@ -34,15 +34,21 @@ def load_dataset(param, split):
     """
     cache = []
     data_dir = Path(DATA_DIR) / param / split
-    for x_path in sorted(data_dir.glob("x_sim_*.npy")):
+    for file_idx, x_path in enumerate(sorted(data_dir.glob("x_sim_*.npy"))):
+        if max_files is not None and file_idx >= max_files:
+            break
         sim_id = x_path.stem.split("_")[-1]
         y_path = data_dir / f"y_sim_{sim_id}.npy"
 
         x = np.load(x_path)
+        if max_samples is not None:
+            x = x[:max_samples]
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
         x = torch.from_numpy(x).float()
 
         y_raw = np.load(y_path)
+        if max_samples is not None:
+            y_raw = y_raw[:max_samples]
         y_min = float(np.min(y_raw))
         y_max = float(np.max(y_raw))
         y_norm = torch.from_numpy(2*((y_raw - y_min)/(y_max - y_min)) - 1).float()
@@ -77,20 +83,39 @@ def main():
     parser.add_argument("--param", type=str, default='density')
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
     parser.add_argument("--resume", action='store_true')
+    parser.add_argument(
+        "--fast",
+        action='store_true',
+        help='Run a very small smoke-test training job',
+    )
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
     os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
-    n_train = len(list((Path(DATA_DIR) / opt.param / 'train').glob('x_sim_*.npy')))
-    n_test  = len(list((Path(DATA_DIR) / opt.param / 'test').glob('x_sim_*.npy')))
+    n_train_available = len(list((Path(DATA_DIR) / opt.param / 'train').glob('x_sim_*.npy')))
+    n_test_available = len(list((Path(DATA_DIR) / opt.param / 'test').glob('x_sim_*.npy')))
 
     learning_rate = 0.001
     scheduler_step = 500
     scheduler_gamma = 0.5
     epochs = 5000
     batch_size = 16
+    samples_per_file = 20
+    train_files_limit = None
+    test_files_limit = None
+    viz_every = 50
+    checkpoint_every = 100
+
+    if opt.fast:
+        epochs = 3
+        batch_size = 4
+        samples_per_file = 4
+        train_files_limit = 1
+        test_files_limit = 1
+        viz_every = 1
+        checkpoint_every = 1
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -112,10 +137,24 @@ def main():
     scaler = torch.amp.GradScaler('cuda', enabled=use_grad_scaler)
 
     # Load all data into memory once — avoids ~460K disk reads over 10k epochs
-    print(f"Loading {n_train} train + {n_test} test files into memory...")
-    train_cache = load_dataset(opt.param, 'train')
-    test_cache  = load_dataset(opt.param, 'test')
+    print(
+        f"Loading {n_train_available} train + {n_test_available} test files into memory..."
+    )
+    train_cache = load_dataset(
+        opt.param,
+        'train',
+        max_files=train_files_limit,
+        max_samples=samples_per_file,
+    )
+    test_cache = load_dataset(
+        opt.param,
+        'test',
+        max_files=test_files_limit,
+        max_samples=samples_per_file,
+    )
     print("Data loaded.")
+    n_train = len(train_cache)
+    n_test = len(test_cache)
 
     n_params = sum(p.numel() for p in model.parameters())
     x0_shape = train_cache[0][0].shape
@@ -129,6 +168,12 @@ def main():
     print(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}")
     print(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})")
     print(f"  Param: {opt.param}")
+    if opt.fast:
+        print(
+            "  Fast mode: enabled "
+            f"(train files={train_files_limit}, test files={test_files_limit}, "
+            f"samples/file={samples_per_file}, viz every epoch)"
+        )
     if autocast_enabled:
         print(f"  Mixed precision: autocast {autocast_dtype} | grad scaler: {use_grad_scaler}")
     else:
@@ -179,8 +224,18 @@ def main():
         log.write(f"  FNO3d(modes=64/64/5, width=30)  |  Parameters: {n_params:,}\n")
         log.write(f"  Input shape: {tuple(x0_shape)}  |  Output shape: {tuple(y0_shape)}\n")
         log.write(f"  Train files: {n_train}  |  Test files: {n_test}\n")
+        if opt.fast:
+            log.write(
+                f"  Fast mode file/sample caps already applied before logging\n"
+            )
         log.write(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}\n")
         log.write(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})\n")
+        if opt.fast:
+            log.write(
+                "  Fast mode: enabled "
+                f"(train files={train_files_limit}, test files={test_files_limit}, "
+                f"samples/file={samples_per_file}, viz every epoch)\n"
+            )
         if autocast_enabled:
             log.write(
                 f"  Mixed precision: autocast {autocast_dtype} | grad scaler: {use_grad_scaler}\n"
@@ -195,8 +250,13 @@ def main():
 
     t1_final = default_timer()
     vis_idx = 0
-    # 20 samples per file, batch_size=4 → 5 gradient steps per file
-    steps_per_file = (20 + batch_size - 1) // batch_size
+    # Samples per file can be reduced in fast mode for quick smoke tests.
+    steps_per_file = (samples_per_file + batch_size - 1) // batch_size
+
+    if len(train_cache) == 0 or len(test_cache) == 0:
+        raise RuntimeError(
+            "No training or test files were loaded. Check the dataset path."
+        )
 
     try:
         for ep in range(start_epoch, epochs):
@@ -208,7 +268,7 @@ def main():
             for bs in range(n_train):
                 x_all, y_all, y_min, y_max = train_cache[bs]
 
-                for l in range(0, 20, batch_size):
+                for l in range(0, samples_per_file, batch_size):
                     x = x_all[l:l+batch_size].cuda()
                     y = y_all[l:l+batch_size].cuda()
                     actual_bs = len(x)
@@ -240,11 +300,11 @@ def main():
             scheduler.step()
             model.eval()
 
-            if (ep + 1) % 50 == 0 or ep == 0:
+            if (ep + 1) % viz_every == 0 or ep == 0:
                 with torch.no_grad():
                     j = np.random.randint(n_test)
-                    xt = test_cache[j][0][4:4+batch_size].cuda()
-                    yt = test_cache[j][1][4:4+batch_size].cpu().numpy()
+                    xt = test_cache[j][0][:batch_size].cuda()
+                    yt = test_cache[j][1][:batch_size].cpu().numpy()
 
                     out = model(xt).cpu().detach().numpy()
 
@@ -269,7 +329,7 @@ def main():
                     plt.close(fig)
                     vis_idx += 1
 
-            total_steps = n_train * steps_per_file
+            total_steps = max(1, n_train * steps_per_file)
             train_mae  /= total_steps
             train_loss /= total_steps
 
@@ -308,7 +368,7 @@ def main():
             with open(log_path, 'a') as log:
                 log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
 
-            if (ep + 1) % 100 == 0 or ep == epochs - 1:
+            if (ep + 1) % checkpoint_every == 0 or ep == epochs - 1:
                 save_checkpoint(ep)
 
     except KeyboardInterrupt:

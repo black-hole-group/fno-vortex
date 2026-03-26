@@ -70,7 +70,7 @@ Output: (batch, 128, 128, 10, 1) → next 10 timesteps
 
 ```bash
 cd src
-python train.py --param <parameter_name>
+python train.py --param <parameter_name> [--fast]
 ```
 
 **Available parameters (Idefix dataset):**
@@ -87,6 +87,8 @@ python train.py --param <parameter_name>
 cd src
 python train.py --param density
 ```
+
+Use `--fast` for a short smoke test that trains on a tiny subset of the data and saves a validation image every epoch.
 
 **Training configuration:**
 - Epochs: 10,000
@@ -207,5 +209,4 @@ fno/
 
 - Duarte, Nemmen & Lima-Santos (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 - Li et al. (2020). Fourier Neural Operator for Parametric Partial Differential Equations. [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
-
 

@@ -19,13 +19,14 @@ Purpose of current branch can be found in `THIS_BRANCH.md`.
 **Training a model:**
 ```bash
 cd src
-python train.py --param <parameter_name> [--experiments-dir <path>]
+python train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 ```
 - `--param` selects which physical field to train on (e.g. `density`, `vy`, `by`; defaults to `density`)
 - Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling (step=500, γ=0.5)
 - Saves model checkpoint to `experiments/<param>/checkpoints/model_64_30.pt`
 - Saves loss history to `experiments/<param>/checkpoints/loss_64_30.npy`
 - Saves one validation prediction image per epoch to `experiments/<param>/visualizations/`
+- `--fast` runs a short smoke test on a tiny subset of the data for quick training/display checks
 
 **Running inference:**
 ```bash

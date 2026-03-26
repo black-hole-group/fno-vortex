@@ -19,7 +19,7 @@ The paper associated with this codebase is `paper/main.tex`. Detailed documentat
 ### Training
 
 ```bash
-python src/train.py --param <parameter_name> [--experiments-dir <path>]
+python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 ```
 
 - **Parameters:** `density`, `vy`, `by` (defaults to `density`)
@@ -27,6 +27,7 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>]
 - **Learning rate:** 0.001 with StepLR scheduler (step=500, gamma=0.5)
 - **Batch size:** 4
 - **Loss:** MAE + Relative L2 (`LpLoss`)
+- `--fast` runs a tiny smoke test with fewer files, fewer samples, and more frequent visualizations
 - **Outputs:**
   - Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
   - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
