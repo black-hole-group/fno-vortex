@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -81,6 +80,9 @@ class FNO3d(nn.Module):
 
         self.fc1 = nn.Linear(self.width, 128)
         self.fc2 = nn.Linear(128, 1)
+        self.register_buffer('_grid', None, persistent=False)
+        self._grid_size = None
+        self._grid_device = None
 
     def forward(self, x):
         
@@ -124,10 +126,15 @@ class FNO3d(nn.Module):
 
     def get_grid(self, shape, device):
         batchsize, size_x, size_y, size_z = shape[0], shape[1], shape[2], shape[3]
-        gridx = torch.tensor(np.linspace(0, 1, size_x), dtype=torch.float)
-        gridx = gridx.reshape(1, size_x, 1, 1, 1).repeat([batchsize, 1, size_y, size_z, 1])
-        gridy = torch.tensor(np.linspace(0, 1, size_y), dtype=torch.float)
-        gridy = gridy.reshape(1, 1, size_y, 1, 1).repeat([batchsize, size_x, 1, size_z, 1])
-        gridz = torch.tensor(np.linspace(0, 1, size_z), dtype=torch.float)
-        gridz = gridz.reshape(1, 1, 1, size_z, 1).repeat([batchsize, size_x, size_y, 1, 1])
-        return torch.cat((gridx, gridy, gridz), dim=-1).to(device)
+        grid_size = (size_x, size_y, size_z)
+        if self._grid is None or self._grid_size != grid_size or self._grid_device != device:
+            gridx = torch.linspace(0, 1, size_x, dtype=torch.float, device=device)
+            gridx = gridx.view(1, size_x, 1, 1, 1).expand(1, size_x, size_y, size_z, 1)
+            gridy = torch.linspace(0, 1, size_y, dtype=torch.float, device=device)
+            gridy = gridy.view(1, 1, size_y, 1, 1).expand(1, size_x, size_y, size_z, 1)
+            gridz = torch.linspace(0, 1, size_z, dtype=torch.float, device=device)
+            gridz = gridz.view(1, 1, 1, size_z, 1).expand(1, size_x, size_y, size_z, 1)
+            self._grid = torch.cat((gridx, gridy, gridz), dim=-1)
+            self._grid_size = grid_size
+            self._grid_device = device
+        return self._grid.expand(batchsize, -1, -1, -1, -1)

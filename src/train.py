@@ -68,6 +68,9 @@ def main():
     epochs = 5000
     batch_size = 16
 
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
     torch.backends.cudnn.benchmark = True
     model = FNO3d(64, 64, 5, 30).cuda()
     # model = torch.compile(model)  # not supported on Python 3.14+
