@@ -67,9 +67,12 @@ def main():
     epochs = 5000
     batch_size = 16
 
+    torch.backends.cudnn.benchmark = True
     model = FNO3d(64, 64, 5, 30).cuda()
+    model = torch.compile(model)
     optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step, gamma=scheduler_gamma)
+    scaler = torch.amp.GradScaler('cuda')
 
     # Load all data into memory once — avoids ~460K disk reads over 10k epochs
     print(f"Loading {n_train} train + {n_test} test files into memory...")
@@ -128,52 +131,54 @@ def main():
                 actual_bs = len(x)
 
                 optimizer.zero_grad()
-                out = model(x).view(actual_bs, 128, 128, 10)
+                with torch.amp.autocast('cuda'):
+                    out = model(x).view(actual_bs, 128, 128, 10)
 
-                mae = F.l1_loss(out, y, reduction='mean')
+                    mae = F.l1_loss(out, y, reduction='mean')
 
-                # Denormalize using file-level min/max (consistent with normalization)
-                y_denorm   = y_min + ((y   + 1) * (y_max - y_min) / 2)
-                out_denorm = y_min + ((out + 1) * (y_max - y_min) / 2)
-                l2 = myloss(out_denorm.view(actual_bs, -1), y_denorm.view(actual_bs, -1))
+                    # Denormalize using file-level min/max (consistent with normalization)
+                    y_denorm   = y_min + ((y   + 1) * (y_max - y_min) / 2)
+                    out_denorm = y_min + ((out + 1) * (y_max - y_min) / 2)
+                    l2 = myloss(out_denorm.view(actual_bs, -1), y_denorm.view(actual_bs, -1))
 
-                loss = mae + l2
-                loss.backward()
-
-                optimizer.step()
+                    loss = mae + l2
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 train_mae  += mae.item()
                 train_loss += loss.item()
 
         scheduler.step()
         model.eval()
 
-        with torch.no_grad():
-            j = np.random.randint(n_test)
-            xt = test_cache[j][0][4:4+batch_size].cuda()
-            yt = test_cache[j][1][4:4+batch_size].cpu().numpy()
+        if (ep + 1) % 50 == 0 or ep == 0:
+            with torch.no_grad():
+                j = np.random.randint(n_test)
+                xt = test_cache[j][0][4:4+batch_size].cuda()
+                yt = test_cache[j][1][4:4+batch_size].cpu().numpy()
 
-            out = model(xt).cpu().detach().numpy()
+                out = model(xt).cpu().detach().numpy()
 
-            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 6))
+                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 6))
 
-            imt   = ax1.pcolormesh(yt[0, :, :, 0])
-            im    = ax2.pcolormesh(out[0, :, :, 0, 0])
-            error = ax3.pcolormesh(yt[0, :, :, 0] - out[0, :, :, 0, 0], cmap='hot')
+                imt   = ax1.pcolormesh(yt[0, :, :, 0])
+                im    = ax2.pcolormesh(out[0, :, :, 0, 0])
+                error = ax3.pcolormesh(yt[0, :, :, 0] - out[0, :, :, 0, 0], cmap='hot')
 
-            for ax, cm, label in [
-                (ax3, error, 'Error'),
-                (ax1, imt,   f'{opt.param} target'),
-                (ax2, im,    f'{opt.param} prediction'),
-            ]:
-                divider = make_axes_locatable(ax)
-                cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
-                fig.add_axes(cax)
-                fig.colorbar(cm, cax=cax, orientation='horizontal')
-                cax.set_xlabel(label)
+                for ax, cm, label in [
+                    (ax3, error, 'Error'),
+                    (ax1, imt,   f'{opt.param} target'),
+                    (ax2, im,    f'{opt.param} prediction'),
+                ]:
+                    divider = make_axes_locatable(ax)
+                    cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
+                    fig.add_axes(cax)
+                    fig.colorbar(cm, cax=cax, orientation='horizontal')
+                    cax.set_xlabel(label)
 
-            plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(vis_idx).zfill(4) + '.png'))
-            plt.close(fig)
-            vis_idx += 1
+                plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(vis_idx).zfill(4) + '.png'))
+                plt.close(fig)
+                vis_idx += 1
 
         total_steps = n_train * steps_per_file
         train_mae  /= total_steps
@@ -207,8 +212,9 @@ def main():
         with open(log_path, 'a') as log:
             log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
 
-        np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
-        torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
+        if (ep + 1) % 100 == 0 or ep == epochs - 1:
+            np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
+            torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
 
     torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
     t2_final = default_timer()
