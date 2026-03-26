@@ -1,14 +1,14 @@
 """
 FNO Result Visualization Script
 
-Loads pre-computed predictions from inference.py (pred_<j>.npy) and generates:
+Loads pre-computed predictions from inference.py (pred_sim_<id>.npy) and generates:
 - 10 PNGs per test file: 3-panel (target | prediction | error) for each timestep
 - 1 GIF per test file: animation of all 10 timesteps for sample 0
 
 Usage:
     python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 
-Run inference.py first to produce pred_*.npy files.
+Run inference.py first to produce pred_sim_*.npy files.
 """
 
 import numpy as np
@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm
+from pathlib import Path
 import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,13 +35,14 @@ def main():
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
-    vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
-    test_dir = os.path.join(DATA_DIR, opt.param, 'test')
+    vis_dir = Path(exp_dir) / opt.param / 'visualizations'
+    test_dir = Path(DATA_DIR) / opt.param / 'test'
 
-    # Infer number of test files from saved predictions
-    n_test = sum(1 for f in os.listdir(vis_dir) if f.startswith('pred_') and f.endswith('.npy'))
-    if n_test == 0:
-        raise FileNotFoundError(f"No pred_*.npy files found in {vis_dir}. Run inference.py first.")
+    # Infer test files from saved predictions
+    pred_files = sorted(vis_dir.glob("pred_sim_*.npy"))
+    if not pred_files:
+        raise FileNotFoundError(f"No pred_sim_*.npy files found in {vis_dir}. Run inference.py first.")
+    n_test = len(pred_files)
 
     print(f"Processing parameter: {opt.param}")
     print(f"Predictions directory: {vis_dir}")
@@ -51,14 +53,15 @@ def main():
     total_pngs = 0
     total_gifs = 0
 
-    for j in tqdm(range(n_test), desc="Test files", unit="file"):
-        pred = np.load(os.path.join(vis_dir, f'pred_{j}.npy')).squeeze(-1)   # (20, 128, 128, 10)
-        y    = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))  # (20, 128, 128, 10)
+    for pred_path in tqdm(pred_files, desc="Test files", unit="file"):
+        sim_id = pred_path.stem.split("_")[-1]
+        pred = np.load(pred_path).squeeze(-1)               # (20, 128, 128, 10)
+        y    = np.load(test_dir / f"y_sim_{sim_id}.npy")   # (20, 128, 128, 10)
 
         s = 0  # representative sample index
 
         # --- 10 static PNGs ---
-        for t in tqdm(range(10), desc=f"PNG {j}", unit="t", leave=False):
+        for t in tqdm(range(10), desc=f"PNG sim_{sim_id}", unit="t", leave=False):
             target = y[s, :, :, t]
             pred_t = pred[s, :, :, t]
             error  = target - pred_t
@@ -68,7 +71,7 @@ def main():
             eabs = max(abs(error.min()), abs(error.max()))
 
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            fig.suptitle(f'{opt.param}  |  test file {j}  |  timestep {t}', fontsize=12)
+            fig.suptitle(f'{opt.param}  |  sim {sim_id}  |  timestep {t}', fontsize=12)
 
             im0 = axes[0].pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
             axes[0].set_title('Target')
@@ -88,16 +91,16 @@ def main():
                 fig.colorbar(im, cax=cax, orientation='horizontal')
 
             plt.tight_layout()
-            fname = os.path.join(vis_dir, f'sample_{j:02d}_time_{t:02d}.png')
+            fname = vis_dir / f'sample_sim_{sim_id}_time_{t:02d}.png'
             plt.savefig(fname, dpi=100, bbox_inches='tight')
             plt.close(fig)
 
         total_pngs += 10
 
         # --- 1 GIF animation ---
-        with tqdm(desc=f"GIF {j}", unit="gif", leave=False) as pbar:
+        with tqdm(desc=f"GIF sim_{sim_id}", unit="gif", leave=False) as pbar:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            fig.suptitle(f'{opt.param} | test file {j} | sample 0', fontsize=12)
+            fig.suptitle(f'{opt.param} | sim {sim_id} | sample 0', fontsize=12)
 
             vmin_all = min(y[s].min(), pred[s].min())
             vmax_all = max(y[s].max(), pred[s].max())
@@ -137,7 +140,7 @@ def main():
                 return im0, im1, im2, time_text
 
             ani = animation.FuncAnimation(fig, update, frames=10, interval=400, blit=False)
-            gif_path = os.path.join(vis_dir, f'sample_{j:02d}_evolution.gif')
+            gif_path = vis_dir / f'sample_sim_{sim_id}_evolution.gif'
             ani.save(gif_path, writer='pillow', dpi=80)
             plt.close(fig)
             pbar.update(1)

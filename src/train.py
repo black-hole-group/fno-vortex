@@ -7,6 +7,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from timeit import default_timer
 from torch.optim import Adam
 import os
+from pathlib import Path
 
 from architecture import FNO3d
 from utilities import LpLoss
@@ -20,20 +21,23 @@ DATA_DIR        = os.path.join(ROOT_DIR, 'data')
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
 
-def load_dataset(param, split, n_files):
+def load_dataset(param, split):
     """Load and normalize all .npy files for a dataset split into memory.
 
     Returns a list of tuples (x_normalized, y_normalized, y_min, y_max).
     y_min/y_max are file-level scalars used for consistent denormalization.
     """
     cache = []
-    data_dir = os.path.join(DATA_DIR, param, split)
-    for i in range(n_files):
-        x = np.load(os.path.join(data_dir, f'x_{i}.npy'))
+    data_dir = Path(DATA_DIR) / param / split
+    for x_path in sorted(data_dir.glob("x_sim_*.npy")):
+        sim_id = x_path.stem.split("_")[-1]
+        y_path = data_dir / f"y_sim_{sim_id}.npy"
+
+        x = np.load(x_path)
         x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
         x = torch.from_numpy(x).float()
 
-        y_raw = np.load(os.path.join(data_dir, f'y_{i}.npy'))
+        y_raw = np.load(y_path)
         y_min = float(np.min(y_raw))
         y_max = float(np.max(y_raw))
         y_norm = torch.from_numpy(2*((y_raw - y_min)/(y_max - y_min)) - 1).float()
@@ -52,8 +56,8 @@ def main():
     os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
-    n_train = len([f for f in os.listdir(os.path.join(DATA_DIR, opt.param, 'train')) if f.startswith('x_')])
-    n_test  = len([f for f in os.listdir(os.path.join(DATA_DIR, opt.param, 'test'))  if f.startswith('x_')])
+    n_train = len(list((Path(DATA_DIR) / opt.param / 'train').glob('x_sim_*.npy')))
+    n_test  = len(list((Path(DATA_DIR) / opt.param / 'test').glob('x_sim_*.npy')))
 
     learning_rate = 0.001
     scheduler_step = 500
@@ -67,8 +71,8 @@ def main():
 
     # Load all data into memory once — avoids ~460K disk reads over 10k epochs
     print(f"Loading {n_train} train + {n_test} test files into memory...")
-    train_cache = load_dataset(opt.param, 'train', n_train)
-    test_cache  = load_dataset(opt.param, 'test',  n_test)
+    train_cache = load_dataset(opt.param, 'train')
+    test_cache  = load_dataset(opt.param, 'test')
     print("Data loaded.")
 
     myloss = LpLoss(size_average=False)

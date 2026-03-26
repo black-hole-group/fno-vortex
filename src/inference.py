@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 from timeit import default_timer
 from tqdm import tqdm
+from pathlib import Path
 
 from architecture import FNO3d
 
@@ -33,8 +34,9 @@ def main():
     model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'), weights_only=True))
     model.eval()
 
-    test_dir = os.path.join(DATA_DIR, opt.param, 'test')
-    n_test = sum(1 for f in os.listdir(test_dir) if f.startswith('x_') and f.endswith('.npy'))
+    test_dir = Path(DATA_DIR) / opt.param / 'test'
+    test_files = sorted(test_dir.glob("x_sim_*.npy"))
+    n_test = len(test_files)
 
     print(f"Test data directory: {test_dir}")
     print(f"Output directory: {vis_dir}")
@@ -44,8 +46,10 @@ def main():
     print(f"\nRunning inference on {n_test} test files...")
 
     with torch.no_grad():
-        for j in tqdm(range(n_test), desc="Inference", unit="file"):
-            x = np.load(os.path.join(test_dir, 'x_'+str(j)+'.npy'))
+        for x_path in tqdm(test_files, desc="Inference", unit="file"):
+            sim_id = x_path.stem.split("_")[-1]
+
+            x = np.load(x_path)
             x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
             x = torch.from_numpy(x).float().cuda()
 
@@ -53,10 +57,10 @@ def main():
 
             del x
 
-            y = np.load(os.path.join(test_dir, 'y_'+str(j)+'.npy'))
+            y = np.load(test_dir / f"y_sim_{sim_id}.npy")
             out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
 
-            np.save(os.path.join(vis_dir, 'pred_'+str(j)+'.npy'), out)
+            np.save(os.path.join(vis_dir, f'pred_sim_{sim_id}.npy'), out)
 
     t2 = default_timer()
 

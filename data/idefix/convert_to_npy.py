@@ -87,10 +87,11 @@ def load_params(params_file):
         return list(reader)
 
 
-def load_all_snapshots(run_dir, field_key):
-    """Load all VTK snapshots for a simulation and extract one field.
+def load_all_snapshots(run_dir):
+    """Load all VTK snapshots for a simulation and extract all fields in one pass.
 
-    Returns array of shape (N_SNAPSHOTS, 128, 128).
+    Returns dict mapping field_key -> array of shape (N_SNAPSHOTS, 128, 128),
+    or None if the simulation is incomplete or corrupted.
     """
     run_dir = Path(run_dir)
     vtk_files = sorted(run_dir.glob("data.????.vtk"))
@@ -100,17 +101,17 @@ def load_all_snapshots(run_dir, field_key):
     if len(vtk_files) < MIN_SNAPSHOTS:
         return None
 
-    frames = []
+    frames = {key: [] for key in FIELD_MAP}
     for vtk_path in vtk_files[:N_SNAPSHOTS]:
         try:
             data = read_vtk(vtk_path)
         except RuntimeError as e:
             print(f"\n  WARNING: corrupted VTK file {vtk_path}: {e}")
             return None
-        field = np.array(data[field_key]).squeeze()  # (128, 128)
-        frames.append(field)
+        for key in FIELD_MAP:
+            frames[key].append(np.array(data[key]).squeeze())  # (128, 128)
 
-    return np.stack(frames, axis=0)  # (N_SNAPSHOTS, 128, 128)
+    return {key: np.stack(frames[key], axis=0) for key in FIELD_MAP}  # each (N_SNAPSHOTS, 128, 128)
 
 
 def build_windows(snapshots, nu, mu):
@@ -147,11 +148,11 @@ def build_windows(snapshots, nu, mu):
     return x_all, y_all
 
 
-def save_npy(output_dir, param_name, split, file_idx, x, y):
+def save_npy(output_dir, param_name, split, sim_id, x, y):
     out = Path(output_dir) / param_name / split
     out.mkdir(parents=True, exist_ok=True)
-    np.save(out / f"x_{file_idx}.npy", x)
-    np.save(out / f"y_{file_idx}.npy", y)
+    np.save(out / f"x_sim_{sim_id:03d}.npy", x)
+    np.save(out / f"y_sim_{sim_id:03d}.npy", y)
 
 
 def main():
@@ -167,13 +168,12 @@ def main():
     params = load_params(args.params)
     runs_dir = Path(args.runs_dir)
 
-    # Track per-split file counters
-    train_counters = {p: 0 for p in FIELD_MAP.values()}
-    test_counters  = {p: 0 for p in FIELD_MAP.values()}
-
     bar    = tqdm(params, desc="Converting", unit="sim", position=1) if HAS_TQDM else None
     status = tqdm(total=0, bar_format="{desc}", position=0, leave=True) if HAS_TQDM else None
     iterable = bar if bar else params
+
+    n_converted = 0
+    n_skipped = 0
 
     for row in iterable:
         sim_id = int(row["sim_id"])
@@ -190,35 +190,32 @@ def main():
                 status.set_description_str(f"sim_{sim_id:03d} MISSING, skipped")
             if bar:
                 bar.update(1)
+            n_skipped += 1
             continue
 
-        skip_sim = False
+        if status:
+            status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} loading VTK")
+
+        all_snapshots = load_all_snapshots(run_dir)
+        if all_snapshots is None:
+            if status:
+                status.set_description_str(f"sim_{sim_id:03d} incomplete, skipped")
+            if bar:
+                bar.update(1)
+            n_skipped += 1
+            continue
+
         for field_key, param_name in FIELD_MAP.items():
             if status:
                 status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} {param_name}")
-
-            snapshots = load_all_snapshots(run_dir, field_key)
-            if snapshots is None:
-                skip_sim = True
-                break
-            x, y = build_windows(snapshots, nu, mu)
-
-            if split == "train":
-                idx = train_counters[param_name]
-                train_counters[param_name] += 1
-            else:
-                idx = test_counters[param_name]
-                test_counters[param_name] += 1
-
-            save_npy(args.output_dir, param_name, split, idx, x, y)
+            x, y = build_windows(all_snapshots[field_key], nu, mu)
+            save_npy(args.output_dir, param_name, split, sim_id, x, y)
 
         if status:
-            if skip_sim:
-                status.set_description_str(f"sim_{sim_id:03d} incomplete, skipped")
-            else:
-                status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} done ({split})")
+            status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} done ({split})")
         if bar:
             bar.update(1)
+        n_converted += 1
 
     if status:
         status.close()
@@ -226,8 +223,7 @@ def main():
         bar.close()
 
     print("\nConversion complete.")
-    print("Train file counts:", train_counters)
-    print("Test  file counts:", test_counters)
+    print(f"Converted: {n_converted}  Skipped: {n_skipped}")
 
 
 if __name__ == "__main__":
