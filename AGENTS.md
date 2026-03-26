@@ -127,7 +127,7 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 
 4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
-5. **Missing assets:** The collaborator who generated the original data did not make available: (1) the FARGO3D parameter/setup files, (2) the training and test `.npy` datasets, or (3) the preprocessing script converting `.dat` → `.npy`. The data pipeline is not reproducible from this repository alone.
+5. **Missing assets:** The collaborator who generated the original data did not make available: (1) the FARGO3D parameter/setup files, (2) the training and test `.npy` datasets, (3) the preprocessing script converting `.dat` → `.npy`, (4) the model checkpoints trained on magnetic field and velocity fields. The data pipeline is not reproducible from this repository alone.
 
 6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 
