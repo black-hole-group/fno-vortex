@@ -8,6 +8,7 @@ from timeit import default_timer
 from torch.optim import Adam
 import os
 from pathlib import Path
+import asciichartpy
 
 from architecture import FNO3d
 from utilities import LpLoss
@@ -75,8 +76,23 @@ def main():
     test_cache  = load_dataset(opt.param, 'test')
     print("Data loaded.")
 
+    n_params = sum(p.numel() for p in model.parameters())
+    x0_shape = train_cache[0][0].shape
+    y0_shape = train_cache[0][1].shape
+    print(f"\n{'='*55}")
+    print(f"  FNO3d(modes=64/64/5, width=30)")
+    print(f"  Parameters : {n_params:,}")
+    print(f"  Input shape: {tuple(x0_shape)}  (samples, x, y, t, channels)")
+    print(f"  Output shape: {tuple(y0_shape)}  (samples, x, y, t)")
+    print(f"  Train files: {n_train}  |  Test files: {n_test}")
+    print(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}")
+    print(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})")
+    print(f"  Param: {opt.param}")
+    print(f"{'='*55}\n")
+
     myloss = LpLoss(size_average=False)
     loss_function = []
+    log10_mae_history = []
     t1_final = default_timer()
     vis_idx = 0
     # 20 samples per file, batch_size=4 → 5 gradient steps per file
@@ -149,7 +165,12 @@ def main():
         train_loss /= total_steps
 
         t2 = default_timer()
-        print(ep, t2 - t1, train_mae, train_loss)
+        lr_now = scheduler.get_last_lr()[0]
+        log10_mae_history.append(np.log10(train_mae))
+        print(f"\nEpoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}")
+        print(f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}")
+        print(asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'}))
+        print(f"  log10(MAE): {log10_mae_history[-1]:.3f}")
 
         loss_function.append(train_mae)
         loss_function.append(train_loss)
@@ -159,7 +180,10 @@ def main():
 
     torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
     t2_final = default_timer()
-    print(t2_final - t1_final)
+    elapsed = t2_final - t1_final
+    h, rem = divmod(int(elapsed), 3600)
+    m, s = divmod(rem, 60)
+    print(f"\nTraining complete. Total time: {h}h {m}m {s}s")
 
 
 if __name__ == '__main__':
