@@ -53,6 +53,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--param", type=str, default='density')
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
+    parser.add_argument("--resume", action='store_true')
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
@@ -112,10 +113,46 @@ def main():
     print(f"{'='*55}\n")
 
     log_path = os.path.join(exp_dir, opt.param, 'checkpoints', 'train.log')
+    checkpoint_dir = os.path.join(exp_dir, opt.param, 'checkpoints')
+    model_path = os.path.join(checkpoint_dir, 'model_64_30.pt')
+    training_state_path = os.path.join(checkpoint_dir, 'training_state.pt')
+    loss_path = os.path.join(checkpoint_dir, 'loss_64_30.npy')
+
+    myloss = LpLoss(size_average=False)
+    loss_function = []
+    log10_mae_history = []
+
+    def save_checkpoint(epoch_idx):
+        checkpoint = {
+            'epoch': epoch_idx,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
+            'loss_function': loss_function,
+            'log10_mae_history': log10_mae_history,
+        }
+        np.save(loss_path, loss_function)
+        torch.save(model.state_dict(), model_path)
+        torch.save(checkpoint, training_state_path)
+
+    start_epoch = 0
+    if opt.resume and os.path.exists(training_state_path):
+        checkpoint = torch.load(training_state_path, map_location='cuda')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        loss_function = checkpoint.get('loss_function', loss_function)
+        log10_mae_history = checkpoint.get('log10_mae_history', log10_mae_history)
+        start_epoch = checkpoint.get('epoch', -1) + 1
+        print(f"Resumed from epoch {start_epoch}")
+
     with open(log_path, 'a') as log:
         log.write(f"\n{'='*70}\n")
         log.write(f"  Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         log.write(f"  Param: {opt.param}\n")
+        log.write(f"  Resume: {opt.resume}\n")
         log.write(f"  FNO3d(modes=64/64/5, width=30)  |  Parameters: {n_params:,}\n")
         log.write(f"  Input shape: {tuple(x0_shape)}  |  Output shape: {tuple(y0_shape)}\n")
         log.write(f"  Train files: {n_train}  |  Test files: {n_test}\n")
@@ -133,121 +170,124 @@ def main():
         log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}  {'eta':>12}\n")
         log.write(f"{'-'*84}\n")
 
-    myloss = LpLoss(size_average=False)
-    loss_function = []
-    log10_mae_history = []
     t1_final = default_timer()
     vis_idx = 0
     # 20 samples per file, batch_size=4 → 5 gradient steps per file
     steps_per_file = (20 + batch_size - 1) // batch_size
 
-    for ep in range(epochs):
-        model.train()
-        t1 = default_timer()
-        train_mae = 0
-        train_loss = 0
+    try:
+        for ep in range(start_epoch, epochs):
+            model.train()
+            t1 = default_timer()
+            train_mae = 0
+            train_loss = 0
 
-        for bs in range(n_train):
-            x_all, y_all, y_min, y_max = train_cache[bs]
+            for bs in range(n_train):
+                x_all, y_all, y_min, y_max = train_cache[bs]
 
-            for l in range(0, 20, batch_size):
-                x = x_all[l:l+batch_size].cuda()
-                y = y_all[l:l+batch_size].cuda()
-                actual_bs = len(x)
+                for l in range(0, 20, batch_size):
+                    x = x_all[l:l+batch_size].cuda()
+                    y = y_all[l:l+batch_size].cuda()
+                    actual_bs = len(x)
 
-                optimizer.zero_grad()
-                if autocast_enabled:
-                    autocast_context = torch.amp.autocast(
-                        'cuda', dtype=autocast_dtype
-                    )
-                else:
-                    autocast_context = nullcontext()
-                with autocast_context:
-                    out = model(x).view(actual_bs, 128, 128, 10)
+                    optimizer.zero_grad()
+                    if autocast_enabled:
+                        autocast_context = torch.amp.autocast(
+                            'cuda', dtype=autocast_dtype
+                        )
+                    else:
+                        autocast_context = nullcontext()
+                    with autocast_context:
+                        out = model(x).view(actual_bs, 128, 128, 10)
 
-                    mae = F.l1_loss(out, y, reduction='mean')
+                        mae = F.l1_loss(out, y, reduction='mean')
 
-                    # Denormalize using file-level min/max (consistent with normalization)
-                    y_denorm   = y_min + ((y   + 1) * (y_max - y_min) / 2)
-                    out_denorm = y_min + ((out + 1) * (y_max - y_min) / 2)
-                    l2 = myloss(out_denorm.view(actual_bs, -1), y_denorm.view(actual_bs, -1))
+                        # Denormalize using file-level min/max (consistent with normalization)
+                        y_denorm   = y_min + ((y   + 1) * (y_max - y_min) / 2)
+                        out_denorm = y_min + ((out + 1) * (y_max - y_min) / 2)
+                        l2 = myloss(out_denorm.view(actual_bs, -1), y_denorm.view(actual_bs, -1))
 
-                    loss = mae + l2
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                train_mae  += mae.item()
-                train_loss += loss.item()
+                        loss = mae + l2
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    train_mae  += mae.item()
+                    train_loss += loss.item()
 
-        scheduler.step()
-        model.eval()
+            scheduler.step()
+            model.eval()
 
-        if (ep + 1) % 50 == 0 or ep == 0:
-            with torch.no_grad():
-                j = np.random.randint(n_test)
-                xt = test_cache[j][0][4:4+batch_size].cuda()
-                yt = test_cache[j][1][4:4+batch_size].cpu().numpy()
+            if (ep + 1) % 50 == 0 or ep == 0:
+                with torch.no_grad():
+                    j = np.random.randint(n_test)
+                    xt = test_cache[j][0][4:4+batch_size].cuda()
+                    yt = test_cache[j][1][4:4+batch_size].cpu().numpy()
 
-                out = model(xt).cpu().detach().numpy()
+                    out = model(xt).cpu().detach().numpy()
 
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 6))
+                    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 6))
 
-                imt   = ax1.pcolormesh(yt[0, :, :, 0])
-                im    = ax2.pcolormesh(out[0, :, :, 0, 0])
-                error = ax3.pcolormesh(yt[0, :, :, 0] - out[0, :, :, 0, 0], cmap='hot')
+                    imt   = ax1.pcolormesh(yt[0, :, :, 0])
+                    im    = ax2.pcolormesh(out[0, :, :, 0, 0])
+                    error = ax3.pcolormesh(yt[0, :, :, 0] - out[0, :, :, 0, 0], cmap='hot')
 
-                for ax, cm, label in [
-                    (ax3, error, 'Error'),
-                    (ax1, imt,   f'{opt.param} target'),
-                    (ax2, im,    f'{opt.param} prediction'),
-                ]:
-                    divider = make_axes_locatable(ax)
-                    cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
-                    fig.add_axes(cax)
-                    fig.colorbar(cm, cax=cax, orientation='horizontal')
-                    cax.set_xlabel(label)
+                    for ax, cm, label in [
+                        (ax3, error, 'Error'),
+                        (ax1, imt,   f'{opt.param} target'),
+                        (ax2, im,    f'{opt.param} prediction'),
+                    ]:
+                        divider = make_axes_locatable(ax)
+                        cax = divider.new_vertical(size='5%', pad=0.5, pack_start=True)
+                        fig.add_axes(cax)
+                        fig.colorbar(cm, cax=cax, orientation='horizontal')
+                        cax.set_xlabel(label)
 
-                plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(vis_idx).zfill(4) + '.png'))
-                plt.close(fig)
-                vis_idx += 1
+                    plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(vis_idx).zfill(4) + '.png'))
+                    plt.close(fig)
+                    vis_idx += 1
 
-        total_steps = n_train * steps_per_file
-        train_mae  /= total_steps
-        train_loss /= total_steps
+            total_steps = n_train * steps_per_file
+            train_mae  /= total_steps
+            train_loss /= total_steps
 
-        t2 = default_timer()
-        lr_now = scheduler.get_last_lr()[0]
-        avg_epoch_time = (t2 - t1_final) / (ep + 1)
-        eta_sec = int(avg_epoch_time * (epochs - ep - 1))
-        eh, erem = divmod(eta_sec, 3600)
-        em, es = divmod(erem, 60)
-        eta_str = f"{eh}h {em}m {es}s"
-        log10_mae_history.append(np.log10(train_mae))
-        chart = asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'})
-        output = (
-            f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}  |  ETA: {eta_str}\n"
-            f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}\n"
-            f"{chart}\n"
-            f"  log10(MAE): {log10_mae_history[-1]:.3f}"
-        )
-        n_lines = output.count('\n') + 1
-        # Move cursor up to overwrite previous epoch's output
-        if ep > 0:
-            print(f"\033[{prev_n_lines}A\033[J", end='')
-        print(output)
-        prev_n_lines = n_lines
+            t2 = default_timer()
+            lr_now = scheduler.get_last_lr()[0]
+            avg_epoch_time = (t2 - t1_final) / (ep - start_epoch + 1)
+            eta_sec = int(avg_epoch_time * (epochs - ep - 1))
+            eh, erem = divmod(eta_sec, 3600)
+            em, es = divmod(erem, 60)
+            eta_str = f"{eh}h {em}m {es}s"
+            log10_mae_history.append(np.log10(train_mae))
+            chart = asciichartpy.plot(log10_mae_history[-100:], {'height': 8, 'format': '{:8.3f}'})
+            output = (
+                f"Epoch {ep+1:>5}/{epochs}  |  time: {t2-t1:.1f}s  |  lr: {lr_now:.2e}  |  ETA: {eta_str}\n"
+                f"  MAE: {train_mae:.6f}  |  Loss (MAE+L2): {train_loss:.6f}\n"
+                f"{chart}\n"
+                f"  log10(MAE): {log10_mae_history[-1]:.3f}"
+            )
+            n_lines = output.count('\n') + 1
+            # Move cursor up to overwrite previous epoch's output
+            if ep > start_epoch:
+                print(f"\033[{prev_n_lines}A\033[J", end='')
+            print(output)
+            prev_n_lines = n_lines
 
-        loss_function.append(train_mae)
-        loss_function.append(train_loss)
+            loss_function.append(train_mae)
+            loss_function.append(train_loss)
 
-        with open(log_path, 'a') as log:
-            log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
+            with open(log_path, 'a') as log:
+                log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
 
-        if (ep + 1) % 100 == 0 or ep == epochs - 1:
-            np.save(os.path.join(exp_dir, opt.param, 'checkpoints', 'loss_64_30.npy'), loss_function)
-            torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
+            if (ep + 1) % 100 == 0 or ep == epochs - 1:
+                save_checkpoint(ep)
 
-    torch.save(model.state_dict(), os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'))
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Saving latest checkpoint...")
+        if 'ep' in locals():
+            save_checkpoint(ep)
+        return
+
+    save_checkpoint(epochs - 1)
     t2_final = default_timer()
     elapsed = t2_final - t1_final
     h, rem = divmod(int(elapsed), 3600)
