@@ -64,7 +64,7 @@ def main():
     learning_rate = 0.001
     scheduler_step = 500
     scheduler_gamma = 0.5
-    epochs = 10000
+    epochs = 5000
     batch_size = 16
 
     model = FNO3d(64, 64, 5, 30).cuda()
