@@ -28,7 +28,9 @@ class SpectralConv3d(nn.Module):
         # (batch, in_channel, x,y,t ), (in_channel, out_channel, x,y,t) -> (batch, out_channel, x,y,t)
         return torch.einsum("bixyz,ioxyz->boxyz", input, weights)
 
+    @torch.amp.autocast('cuda', enabled=False)
     def forward(self, x):
+        x = x.float()
         batchsize = x.shape[0]
         #Compute Fourier coeffcients up to factor of e^(- something constant)
         x_ft = torch.fft.rfftn(x, dim=[-3,-2,-1])
