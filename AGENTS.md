@@ -149,15 +149,11 @@ Two numerical solvers have been used:
 
 1. **Duplicate model definitions:** `FNO3d` and `SpectralConv3d` are defined in both `architecture.py` and `train.py`. Changes must be applied to both files.
 
-2. **Import mismatch:** `train.py` imports `from utilities3 import *` but the file is `utilities.py`. Either rename the file or fix the import.
+2. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
-3. **CUDA required:** Code uses `.cuda()` throughout with no CPU fallback. Training will fail without a GPU.
+3. **Preprocessing script:** `data/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
 
-4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
-
-5. **Preprocessing script:** `data/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
-
-6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
+4. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 
 ## Path Conventions
 
