@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import argparse
+from contextlib import nullcontext
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from timeit import default_timer
@@ -72,7 +73,16 @@ def main():
     # model = torch.compile(model)  # not supported on Python 3.14+
     optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step, gamma=scheduler_gamma)
-    scaler = torch.amp.GradScaler('cuda')
+    has_complex_params = any(torch.is_complex(param) for param in model.parameters())
+    bf16_supported = torch.cuda.is_bf16_supported()
+    if has_complex_params:
+        autocast_enabled = bf16_supported
+        autocast_dtype = torch.bfloat16 if bf16_supported else None
+    else:
+        autocast_enabled = True
+        autocast_dtype = torch.bfloat16 if bf16_supported else torch.float16
+    use_grad_scaler = autocast_enabled and autocast_dtype == torch.float16
+    scaler = torch.amp.GradScaler('cuda', enabled=use_grad_scaler)
 
     # Load all data into memory once — avoids ~460K disk reads over 10k epochs
     print(f"Loading {n_train} train + {n_test} test files into memory...")
@@ -92,6 +102,10 @@ def main():
     print(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}")
     print(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})")
     print(f"  Param: {opt.param}")
+    if autocast_enabled:
+        print(f"  Mixed precision: autocast {autocast_dtype} | grad scaler: {use_grad_scaler}")
+    else:
+        print("  Mixed precision: disabled (complex parameters require unsupported AMP unscale)")
     print(f"{'='*55}\n")
 
     log_path = os.path.join(exp_dir, opt.param, 'checkpoints', 'train.log')
@@ -104,6 +118,14 @@ def main():
         log.write(f"  Train files: {n_train}  |  Test files: {n_test}\n")
         log.write(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}\n")
         log.write(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})\n")
+        if autocast_enabled:
+            log.write(
+                f"  Mixed precision: autocast {autocast_dtype} | grad scaler: {use_grad_scaler}\n"
+            )
+        else:
+            log.write(
+                "  Mixed precision: disabled (complex parameters require unsupported AMP unscale)\n"
+            )
         log.write(f"{'='*70}\n")
         log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}  {'eta':>12}\n")
         log.write(f"{'-'*84}\n")
@@ -131,7 +153,13 @@ def main():
                 actual_bs = len(x)
 
                 optimizer.zero_grad()
-                with torch.amp.autocast('cuda'):
+                if autocast_enabled:
+                    autocast_context = torch.amp.autocast(
+                        'cuda', dtype=autocast_dtype
+                    )
+                else:
+                    autocast_context = nullcontext()
+                with autocast_context:
                     out = model(x).view(actual_bs, 128, 128, 10)
 
                     mae = F.l1_loss(out, y, reduction='mean')
