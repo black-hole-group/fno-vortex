@@ -64,7 +64,7 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 - Parameters: nu = mu sampled in [1e-5, 5e-2]
 - Test cases (held out): nu = mu = 5e-5 and nu = mu = 3e-4
 - FARGO3D outputs binary `.dat` files (16,384 values = 128x128 per field)
-- A preprocessing script (**location TBD**) converts `.dat` to `.npy` format, assembling sliding-window input/output blocks with nu and mu appended as the last 2 channels
+- A preprocessing script (not available — see Known Issues) converts `.dat` to `.npy` format, assembling sliding-window input/output blocks with nu and mu appended as the last 2 channels
 
 ### Normalization
 
@@ -127,7 +127,7 @@ Raw data comes from FARGO3D simulations of the Orszag-Tang vortex:
 
 4. **Unused BatchNorm layers:** `bn0`-`bn3` are defined in `FNO3d.__init__` but never called in `forward()`.
 
-5. **Preprocessing script missing:** The script that converts FARGO3D `.dat` outputs to `.npy` format is not in this repository (location TBD).
+5. **Missing assets:** The collaborator who generated the original data did not make available: (1) the FARGO3D parameter/setup files, (2) the training and test `.npy` datasets, or (3) the preprocessing script converting `.dat` → `.npy`. The data pipeline is not reproducible from this repository alone.
 
 6. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
 

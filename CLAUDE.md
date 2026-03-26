@@ -114,7 +114,9 @@ Training combines two losses:
 
 **FARGO3D setup:** the Orszag–Tang vortex is a built-in problem in FARGO3D. Viscosity ν and diffusivity μ are set via the parameter file. 50 simulations were run in total, each for 1,000 timesteps, sampling ν = μ across [10⁻⁵, 5×10⁻²]. 48 simulations are used for training/validation and 2 are held out for testing (ν = μ = 5×10⁻⁵ and ν = μ = 3×10⁻⁴).
 
-**Conversion to `.npy`:** a preprocessing script (**location TBD**) reads the binary FARGO3D outputs, reshapes them to 128×128, assembles the sliding-window input/output blocks, appends ν and μ as the last 2 channels of `x`, and writes the paired `x_<idx>.npy` / `y_<idx>.npy` files consumed by `train.py`. The resulting shapes are `(20, 128, 128, 10, 7)` for `x` and `(20, 128, 128, 10)` for `y`.
+**Conversion to `.npy`:** a preprocessing script (not available — see note below) reads the binary FARGO3D outputs, reshapes them to 128×128, assembles the sliding-window input/output blocks, appends ν and μ as the last 2 channels of `x`, and writes the paired `x_<idx>.npy` / `y_<idx>.npy` files consumed by `train.py`. The resulting shapes are `(20, 128, 128, 10, 7)` for `x` and `(20, 128, 128, 10)` for `y`.
+
+**Missing assets:** The collaborator who generated the original data did not make the following available: (1) the FARGO3D parameter/setup files used to run the 50 simulations, (2) the training and test `.npy` datasets, and (3) the preprocessing script that converts raw FARGO3D `.dat` outputs into the `.npy` format consumed by `train.py`. The data pipeline is therefore not reproducible from this repository alone.
 
 ## Physical Context
 
