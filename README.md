@@ -70,7 +70,7 @@ Output: (batch, 128, 128, 10, 1) → next 10 timesteps
 
 ```bash
 cd src
-python train.py --param <parameter_name> [--fast]
+python train.py --param <parameter_name> [--fast] [--patience N]
 ```
 
 **Available parameters (Idefix dataset):**
@@ -91,10 +91,11 @@ python train.py --param density
 Use `--fast` for a short smoke test that trains on a tiny subset of the data and saves a validation image every epoch.
 
 **Training configuration:**
-- Epochs: 10,000
-- Batch size: 4 (per gradient step)
+- Epochs: 5,000
+- Batch size: 16 (per gradient step)
 - Optimizer: Custom Adam with `weight_decay=1e-4`
 - Learning rate: 0.001 with StepLR scheduler (`step_size=500`, `gamma=0.5`)
+- Early stopping: `--patience 500` (default; monitors validation loss, 0 = disabled)
 - Loss: Combined MAE (L1) + Relative L2 loss
 
 **Output** (paths are relative to project root):
@@ -142,8 +143,8 @@ The model uses a composite loss (defined in `src/utilities.py`):
 
 ### Data Loading
 
-- Online loading: one batch file loaded at a time to manage GPU memory
-- Training files: 90 | Test files: 21
+- All data cached in memory at startup to avoid repeated disk I/O
+- Training files: 88 | Test files: 4 (Idefix dataset)
 - Batch size per gradient update: 4 samples
 
 ## Data Format
