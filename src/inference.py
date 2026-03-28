@@ -22,25 +22,34 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--param", type=str, default='density')
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to checkpoint file. Defaults to <experiments-dir>/<param>/checkpoints/model_64_30.pt")
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
     vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
     os.makedirs(vis_dir, exist_ok=True)
 
+    checkpoint_path = opt.checkpoint if opt.checkpoint else \
+        os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')
+
     print(f"Processing parameter: {opt.param}")
 
     model = FNO3d(64, 64, 5, 30).cuda()
-    model.load_state_dict(torch.load(os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'), weights_only=True))
+    model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
     model.eval()
 
     test_dir = Path(DATA_DIR) / opt.param / 'test'
     test_files = sorted(test_dir.glob("x_sim_*.npy"))
     n_test = len(test_files)
 
+    if n_test == 0:
+        print(f"ERROR: No test files (x_sim_*.npy) found in {test_dir}")
+        return
+
     print(f"Test data directory: {test_dir}")
     print(f"Output directory: {vis_dir}")
-    print(f"Loading model from: {os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')}")
+    print(f"Loading model from: {checkpoint_path}")
 
     t1 = default_timer()
     print(f"\nRunning inference on {n_test} test files...")
