@@ -88,6 +88,8 @@ def main():
         action='store_true',
         help='Run a very small smoke-test training job',
     )
+    parser.add_argument('--patience', type=int, default=500,
+                        help='Early stopping patience in epochs (0 = disabled)')
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
@@ -189,6 +191,10 @@ def main():
     myloss = LpLoss(size_average=False)
     loss_function = []
     log10_mae_history = []
+    log10_val_mae_history = []
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    best_model_path = os.path.join(checkpoint_dir, 'model_best.pt')
 
     def save_checkpoint(epoch_idx):
         checkpoint = {
@@ -199,6 +205,9 @@ def main():
             'scaler_state_dict': scaler.state_dict(),
             'loss_function': loss_function,
             'log10_mae_history': log10_mae_history,
+            'log10_val_mae_history': log10_val_mae_history,
+            'best_val_loss': best_val_loss,
+            'epochs_no_improve': epochs_no_improve,
         }
         np.save(loss_path, loss_function)
         torch.save(model.state_dict(), model_path)
@@ -213,6 +222,9 @@ def main():
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
         loss_function = checkpoint.get('loss_function', loss_function)
         log10_mae_history = checkpoint.get('log10_mae_history', log10_mae_history)
+        log10_val_mae_history = checkpoint.get('log10_val_mae_history', log10_val_mae_history)
+        best_val_loss = checkpoint.get('best_val_loss', best_val_loss)
+        epochs_no_improve = checkpoint.get('epochs_no_improve', epochs_no_improve)
         start_epoch = checkpoint.get('epoch', -1) + 1
         print(f"Resumed from epoch {start_epoch}")
 
@@ -245,8 +257,8 @@ def main():
                 "  Mixed precision: disabled (complex parameters require unsupported AMP unscale)\n"
             )
         log.write(f"{'='*70}\n")
-        log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'log10_mae':>10}  {'eta':>12}\n")
-        log.write(f"{'-'*84}\n")
+        log.write(f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  {'loss':>12}  {'val_mae':>12}  {'val_loss':>12}  {'log10_mae':>10}  {'eta':>12}\n")
+        log.write(f"{'-'*110}\n")
 
     t1_final = default_timer()
     vis_idx = 0
@@ -300,6 +312,48 @@ def main():
             scheduler.step()
             model.eval()
 
+            # --- Validation pass ---
+            val_steps = 0
+            val_mae_sum = 0.0
+            val_loss_sum = 0.0
+            with torch.no_grad():
+                for j in range(n_test):
+                    x_t, y_t, y_min_t, y_max_t = test_cache[j]
+                    for l in range(0, samples_per_file, batch_size):
+                        xb = x_t[l:l+batch_size].cuda()
+                        yb = y_t[l:l+batch_size].cuda()
+                        ab = len(xb)
+                        if autocast_enabled:
+                            val_autocast = torch.amp.autocast('cuda', dtype=autocast_dtype)
+                        else:
+                            val_autocast = nullcontext()
+                        with val_autocast:
+                            ob = model(xb).view(ab, 128, 128, 10)
+                            val_mae_b = F.l1_loss(ob, yb, reduction='mean')
+                            y_dn = y_min_t + ((yb + 1) * (y_max_t - y_min_t) / 2)
+                            o_dn = y_min_t + ((ob + 1) * (y_max_t - y_min_t) / 2)
+                            val_l2_b = myloss(o_dn.view(ab, -1), y_dn.view(ab, -1))
+                        val_mae_sum  += val_mae_b.item()
+                        val_loss_sum += (val_mae_b + val_l2_b).item()
+                        val_steps += 1
+            val_mae  = val_mae_sum  / max(1, val_steps)
+            val_loss = val_loss_sum / max(1, val_steps)
+
+            # --- Early stopping ---
+            if opt.patience > 0:
+                if val_loss < best_val_loss - 1e-4:
+                    best_val_loss = val_loss
+                    epochs_no_improve = 0
+                    torch.save(model.state_dict(), best_model_path)
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= opt.patience:
+                        print(f"\nEarly stopping at epoch {ep+1} "
+                              f"(no improvement for {opt.patience} epochs, "
+                              f"best val loss {best_val_loss:.4e}).")
+                        save_checkpoint(ep)
+                        break
+
             if (ep + 1) % viz_every == 0 or ep == 0:
                 with torch.no_grad():
                     j = np.random.randint(n_test)
@@ -341,19 +395,24 @@ def main():
             em, es = divmod(erem, 60)
             eta_str = f"{eh}h {em}m {es}s"
             log10_mae_history.append(np.log10(train_mae))
+            log10_val_mae_history.append(np.log10(val_mae))
             cols = shutil.get_terminal_size(fallback=(100, 24)).columns
             chart_cols = max(20, cols - 12)
-            chart_history = compress_series(log10_mae_history[-100:], chart_cols)
+            train_chart_data = compress_series(log10_mae_history[-100:], chart_cols)
+            val_chart_data   = compress_series(log10_val_mae_history[-100:], chart_cols)
             chart = asciichartpy.plot(
-                chart_history,
-                {'height': 8, 'format': '{:6.2f}', 'offset': 2},
+                [train_chart_data, val_chart_data],
+                {'height': 8, 'format': '{:6.2f}', 'offset': 2,
+                 'colors': [None, asciichartpy.green]},
             )
             eta_compact = f"{eh:02d}:{em:02d}:{es:02d}"
+            patience_str = f" | no-improve {epochs_no_improve}/{opt.patience}" if opt.patience > 0 else ""
             output = (
                 f"Ep {ep+1}/{epochs} | {t2-t1:.1f}s | lr {lr_now:.2e} | ETA {eta_compact}\n"
-                f"MAE {train_mae:.4e} | Loss {train_loss:.4e}\n"
+                f"Train — MAE {train_mae:.4e} | Loss {train_loss:.4e}\n"
+                f"\033[32mVal\033[0m   — MAE {val_mae:.4e} | Loss {val_loss:.4e}{patience_str}\n"
                 f"{chart}\n"
-                f"  log10(MAE): {log10_mae_history[-1]:.3f}"
+                f"  log10(MAE): train {log10_mae_history[-1]:.3f}  \033[32mval {log10_val_mae_history[-1]:.3f}\033[0m"
             )
             n_lines = visual_line_count(output, cols)
             # Move cursor up to overwrite previous epoch's output
@@ -366,7 +425,7 @@ def main():
             loss_function.append(train_loss)
 
             with open(log_path, 'a') as log:
-                log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
+                log.write(f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  {train_mae:>12.6f}  {train_loss:>12.6f}  {val_mae:>12.6f}  {val_loss:>12.6f}  {log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n")
 
             if (ep + 1) % checkpoint_every == 0 or ep == epochs - 1:
                 save_checkpoint(ep)
