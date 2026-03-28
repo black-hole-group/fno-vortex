@@ -1,1 +1,2 @@
-In the process of generating training and test data with the Idefix MHD code. Developing scripts to generate the data, preprocess it and train the FNO with them.
+Implemented validation and early stopping criterion in order to avoid training with
+an excessive number of epochs.
