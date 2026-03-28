@@ -15,6 +15,7 @@ Run inference.py first to produce pred_sim_*.npy files.
 
 import numpy as np
 import argparse
+import subprocess
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -97,6 +98,32 @@ def main():
                 total_pngs += 1
 
     print(f"\nDone. Generated {total_pngs} PNGs in {vis_dir}/")
+
+    # --- movies (one per simulation) ---
+    for pred_path in pred_files:
+        sim_id = pred_path.stem.split("_")[-1]
+        movie_path = vis_dir / f'movie_sim_{sim_id}.mp4'
+
+        # build a concat list of all PNGs for this sim, sorted by frame number
+        png_list = sorted(vis_dir.glob(f'frame_*_sim_{sim_id}.png'))
+        concat_file = vis_dir / f'_concat_sim_{sim_id}.txt'
+        with open(concat_file, 'w') as f:
+            for p in png_list:
+                f.write(f"file '{p.name}'\nduration 0.0667\n")  # ~15 fps
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0',
+            '-i', str(concat_file),
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+            '-pix_fmt', 'yuv420p',
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+            str(movie_path)
+        ]
+        print(f"\nRendering movie for sim {sim_id}...")
+        subprocess.run(cmd, check=True, cwd=str(vis_dir))
+        concat_file.unlink()
+        print(f"Saved: {movie_path}")
 
 
 if __name__ == '__main__':
