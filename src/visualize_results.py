@@ -51,6 +51,7 @@ def main():
     print(f"Found {n_test} prediction files")
 
     total_pngs = 0
+    skipped_pngs = 0
 
     for pred_path in tqdm(pred_files, desc="Test files", unit="file"):
         sim_id = pred_path.stem.split("_")[-1]
@@ -62,6 +63,11 @@ def main():
         for s in tqdm(range(n_samples), desc=f"Samples sim_{sim_id}", unit="s", leave=False):
             for t in range(pred.shape[3]):
                 frame = 160 + s + t * 80
+                fname = vis_dir / f'frame_{frame:04d}_sim_{sim_id}.png'
+
+                if fname.exists():
+                    skipped_pngs += 1
+                    continue
 
                 target = y[s, :, :, t]
                 pred_t = pred[s, :, :, t]
@@ -92,17 +98,20 @@ def main():
                     fig.colorbar(im, cax=cax, orientation='horizontal')
 
                 plt.tight_layout()
-                fname = vis_dir / f'frame_{frame:04d}_sim_{sim_id}.png'
                 plt.savefig(fname, dpi=100, bbox_inches='tight')
                 plt.close(fig)
                 total_pngs += 1
 
-    print(f"\nDone. Generated {total_pngs} PNGs in {vis_dir}/")
+    print(f"\nDone. Generated {total_pngs} PNGs, skipped {skipped_pngs} already existing, in {vis_dir}/")
 
     # --- movies (one per simulation) ---
     for pred_path in pred_files:
         sim_id = pred_path.stem.split("_")[-1]
         movie_path = vis_dir / f'movie_sim_{sim_id}.mp4'
+
+        if movie_path.exists():
+            print(f"\nSkipping movie for sim {sim_id} (already exists)")
+            continue
 
         # build a concat list of all PNGs for this sim, sorted by frame number
         png_list = sorted(vis_dir.glob(f'frame_*_sim_{sim_id}.png'))
@@ -114,11 +123,11 @@ def main():
         cmd = [
             'ffmpeg', '-y',
             '-f', 'concat', '-safe', '0',
-            '-i', str(concat_file),
+            '-i', concat_file.name,
             '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
             '-pix_fmt', 'yuv420p',
             '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
-            str(movie_path)
+            movie_path.name
         ]
         print(f"\nRendering movie for sim {sim_id}...")
         subprocess.run(cmd, check=True, cwd=str(vis_dir))
