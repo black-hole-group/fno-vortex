@@ -51,8 +51,8 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 
 - Loads `pred_<j>.npy` files saved by `inference.py` (does **not** re-run the model)
 - For each test file `j`, using sample index 0:
-  - 10 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
-  - 1 GIF: `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
+  - 20 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
+  - 1 GIF: `sample_{j:02d}_evolution.gif` — animation across all 20 timesteps
 - Outputs saved to `experiments/<param>/visualizations/`
 
 ### Linting
@@ -67,8 +67,8 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 - **Training:** `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
 - **Test:** `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
 - For FARGO3D data, `<param>` includes the solver prefix, e.g. `fargo3d/density`
-- **Input shape:** `(20, 128, 128, 10, 7)` -- 20 samples, 128x128 grid, 10 frames, 7 channels
-- **Output shape:** `(20, 128, 128, 10)` -- 10 predicted frames
+- **Input shape:** `(20, 128, 128, 20, 7)` -- 20 samples, 128x128 grid, 20 frames, 7 channels
+- **Output shape:** `(20, 128, 128, 20)` -- 20 predicted frames
 
 ### Data Generation
 
@@ -84,7 +84,7 @@ Two numerical solvers have been used:
 4. `python convert_to_npy.py [--runs-dir runs] [--output-dir ../../data]` → `data/<param>/[train|test]/[x|y]_<idx>.npy`
    - Requires `pip install idefix-pytools`
    - Fields: RHO→density, VX1→vx, VX2→vy, BX1→bx, BX2→by
-   - 20 sliding windows per sim; input: 5 frames spaced 20 apart; output: 10 frames spaced 80 apart from frame 160
+   - 20 sliding windows per sim; input: 5 consecutive frames; output: 20 consecutive frames immediately after input
    - nu and mu appended as channels 5–6
    - **File count note:** 25 sims → 23 train + 2 test files per field; `train.py` and `inference.py` count files dynamically, so no code changes needed
 
@@ -103,9 +103,9 @@ Two numerical solvers have been used:
 
 **Model:** `FNO3d(64, 64, 5, 30)` -- 64 spatial Fourier modes, 5 temporal modes, width 30
 
-- **Input:** `(batch, 128, 128, 10, 7)` -> 5 frames + 2 physical params
+- **Input:** `(batch, 128, 128, 20, 7)` -> 5 frames + 2 physical params, T_in=20
 - **Internal:** `get_grid()` appends 3 coordinate channels -> 10 channels, lifted to width 30
-- **Output:** `(batch, 128, 128, 10)` -- 10 predicted timesteps
+- **Output:** `(batch, 128, 128, 20)` -- 20 predicted timesteps
 - **Layers:** 5 Fourier layers (SpectralConv3d + 1x1x1 Conv), GELU activation
 - **Time padding:** 6 (non-periodic temporal boundaries)
 
