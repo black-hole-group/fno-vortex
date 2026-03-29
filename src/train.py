@@ -43,7 +43,14 @@ def load_dataset(param, split, max_files=None, max_samples=None):
         x = np.load(x_path)
         if max_samples is not None:
             x = x[:max_samples]
-        x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2]))/(np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
+        x_data = x[:, :, :, :, :-2]
+        x_min = np.min(x_data)
+        x_max = np.max(x_data)
+        x_range = x_max - x_min
+        if x_range > 0:
+            x[:, :, :, :, :-2] = 2 * ((x_data - x_min) / x_range) - 1
+        else:
+            x[:, :, :, :, :-2] = 0
         x = torch.from_numpy(x).float()
 
         y_raw = np.load(y_path)
@@ -51,7 +58,11 @@ def load_dataset(param, split, max_files=None, max_samples=None):
             y_raw = y_raw[:max_samples]
         y_min = float(np.min(y_raw))
         y_max = float(np.max(y_raw))
-        y_norm = torch.from_numpy(2*((y_raw - y_min)/(y_max - y_min)) - 1).float()
+        y_range = y_max - y_min
+        if y_range > 0:
+            y_norm = torch.from_numpy(2 * ((y_raw - y_min) / y_range) - 1).float()
+        else:
+            y_norm = torch.zeros_like(torch.from_numpy(y_raw).float())
 
         cache.append((x, y_norm, y_min, y_max))
     return cache
@@ -97,6 +108,8 @@ def main():
     parser.add_argument('--patience', type=int, default=500,
                         help='Early stopping patience in epochs (0 = disabled)')
     opt = parser.parse_args()
+    if opt.batch_size <= 0:
+        parser.error("--batch-size must be positive")
 
     exp_dir = opt.experiments_dir
     os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
@@ -161,6 +174,12 @@ def main():
         max_samples=samples_per_file,
     )
     print("Data loaded.")
+
+    if len(train_cache) == 0 or len(test_cache) == 0:
+        raise RuntimeError(
+            "No training or test files were loaded. Check the dataset path."
+        )
+
     n_train = len(train_cache)
     n_test = len(test_cache)
 
@@ -268,13 +287,6 @@ def main():
 
     t1_final = default_timer()
     vis_idx = 0
-    # Samples per file can be reduced in fast mode for quick smoke tests.
-    steps_per_file = (samples_per_file + batch_size - 1) // batch_size
-
-    if len(train_cache) == 0 or len(test_cache) == 0:
-        raise RuntimeError(
-            "No training or test files were loaded. Check the dataset path."
-        )
 
     try:
         for ep in range(start_epoch, epochs):
@@ -282,14 +294,18 @@ def main():
             t1 = default_timer()
             train_mae = 0
             train_loss = 0
+            train_steps = 0
 
             for bs in range(n_train):
                 x_all, y_all, y_min, y_max = train_cache[bs]
 
-                for l in range(0, samples_per_file, batch_size):
+                for l in range(0, len(x_all), batch_size):
                     x = x_all[l:l+batch_size].cuda()
                     y = y_all[l:l+batch_size].cuda()
                     actual_bs = len(x)
+
+                    if actual_bs == 0:
+                        continue
 
                     optimizer.zero_grad()
                     if autocast_enabled:
@@ -314,6 +330,7 @@ def main():
                     scaler.update()
                     train_mae  += mae.item()
                     train_loss += loss.item()
+                    train_steps += 1
 
             scheduler.step()
             model.eval()
@@ -325,10 +342,12 @@ def main():
             with torch.no_grad():
                 for j in range(n_test):
                     x_t, y_t, y_min_t, y_max_t = test_cache[j]
-                    for l in range(0, samples_per_file, batch_size):
+                    for l in range(0, len(x_t), batch_size):
                         xb = x_t[l:l+batch_size].cuda()
                         yb = y_t[l:l+batch_size].cuda()
                         ab = len(xb)
+                        if ab == 0:
+                            continue
                         if autocast_enabled:
                             val_autocast = torch.amp.autocast('cuda', dtype=autocast_dtype)
                         else:
@@ -389,9 +408,8 @@ def main():
                     plt.close(fig)
                     vis_idx += 1
 
-            total_steps = max(1, n_train * steps_per_file)
-            train_mae  /= total_steps
-            train_loss /= total_steps
+            train_mae  /= max(1, train_steps)
+            train_loss /= max(1, train_steps)
 
             t2 = default_timer()
             lr_now = scheduler.get_last_lr()[0]
@@ -442,7 +460,6 @@ def main():
             save_checkpoint(ep)
         return
 
-    save_checkpoint(epochs - 1)
     t2_final = default_timer()
     elapsed = t2_final - t1_final
     h, rem = divmod(int(elapsed), 3600)
