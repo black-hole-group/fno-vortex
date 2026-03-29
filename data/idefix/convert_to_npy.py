@@ -101,7 +101,8 @@ def load_all_snapshots(run_dir):
     vtk_files = sorted(run_dir.glob("data.????.vtk"))
 
     if len(vtk_files) == 0:
-        raise FileNotFoundError(f"No VTK files found in {run_dir}")
+        print(f"\n  WARNING: no VTK files found in {run_dir}")
+        return None
     if len(vtk_files) < MIN_SNAPSHOTS:
         return None
 
@@ -109,7 +110,7 @@ def load_all_snapshots(run_dir):
     for vtk_path in vtk_files[:N_SNAPSHOTS]:
         try:
             data = read_vtk(vtk_path)
-        except RuntimeError as e:
+        except Exception as e:
             print(f"\n  WARNING: corrupted VTK file {vtk_path}: {e}")
             return None
         for key in FIELD_MAP:
