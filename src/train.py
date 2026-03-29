@@ -88,6 +88,12 @@ def main():
         action='store_true',
         help='Run a very small smoke-test training job',
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help='Training batch size',
+    )
     parser.add_argument('--patience', type=int, default=500,
                         help='Early stopping patience in epochs (0 = disabled)')
     opt = parser.parse_args()
@@ -103,7 +109,7 @@ def main():
     scheduler_step = 500
     scheduler_gamma = 0.5
     epochs = 5000
-    batch_size = 16
+    batch_size = opt.batch_size
     samples_per_file = 20
     train_files_limit = None
     test_files_limit = None
