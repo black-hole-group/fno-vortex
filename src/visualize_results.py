@@ -107,7 +107,7 @@ def main():
         sim_id = pred_path.stem.split("_")[-1]
         movie_path = vis_dir / f'movie_sim_{sim_id}.mp4'
 
-        if movie_path.exists():
+        if movie_path.exists() and not opt.force:
             print(f"\nSkipping movie for sim {sim_id} (already exists)")
             continue
 
