@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Generate the (nu, mu) parameter table for the Orszag-Tang vortex simulations.
 
