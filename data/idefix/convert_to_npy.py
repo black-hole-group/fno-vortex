@@ -173,7 +173,7 @@ def main():
     runs_dir = Path(args.runs_dir)
 
     bar    = tqdm(params, desc="Converting", unit="sim", position=1) if HAS_TQDM else None
-    status = tqdm(total=0, bar_format="{desc}", position=0, leave=True) if HAS_TQDM else None
+    status = tqdm(total=0, bar_format="{desc}", position=0, leave=False) if HAS_TQDM else None
     iterable = bar if bar else params
 
     n_converted = 0
