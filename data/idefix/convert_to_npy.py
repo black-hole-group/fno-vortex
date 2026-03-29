@@ -5,17 +5,17 @@ For each simulation in params.csv, reads all VTK snapshots and constructs
 sliding-window input/output blocks matching the format expected by train.py.
 
 Output per physical field (density, vx, vy, bx, by):
-  data/<param>/train/x_<idx>.npy  shape (20, 128, 128, 10, 7)
-  data/<param>/train/y_<idx>.npy  shape (20, 128, 128, 10)
-  data/<param>/test/x_<idx>.npy   shape (20, 128, 128, 10, 7)
-  data/<param>/test/y_<idx>.npy   shape (20, 128, 128, 10)
+  data/<param>/train/x_<idx>.npy  shape (20, 128, 128, 20, 7)
+  data/<param>/train/y_<idx>.npy  shape (20, 128, 128, 20)
+  data/<param>/test/x_<idx>.npy   shape (20, 128, 128, 20, 7)
+  data/<param>/test/y_<idx>.npy   shape (20, 128, 128, 20)
 
-Sliding window details (from paper):
+Sliding window details:
   - 1000 snapshots total (frames 0-999, dt=0.05)
-  - Input  : 5 frames from frames 0-159, spaced 20 apart (dt=1.0 code units)
-  - Output : 10 frames from frames 160-999, spaced 80 apart (dt=4.0 code units)
+  - Input  : 5 consecutive frames starting at `start` (dt=0.05 code units each)
+  - Output : 20 consecutive frames immediately after input (frames start+5 .. start+24)
   - 20 sliding windows per simulation (start frames 0..19)
-  - x channels 5-6: nu and mu broadcast to fill (128, 128, 10)
+  - x channels 5-6: nu and mu broadcast to fill (128, 128, 20)
 
 Usage:
   python convert_to_npy.py [--runs-dir runs] [--params params.csv]
@@ -71,14 +71,14 @@ FIELD_MAP = {
 }
 
 N_SNAPSHOTS = 1000      # frames 0-999
-N_INPUT_FRAMES = 160    # first 160 frames are the input window
-INPUT_SPACING = 20      # input frames spaced 20 apart → dt=1.0
+N_INPUT_FRAMES = 5      # number of consecutive input frames per sample
+INPUT_SPACING = 1       # input frames consecutive → dt=0.05
 N_INPUT_CHANNELS = 5    # 5 input frames per sample
-OUTPUT_SPACING = 80     # output frames spaced 80 apart → dt=4.0
-N_OUTPUT_FRAMES = 10    # 10 output frames per sample
+OUTPUT_SPACING = 1      # output frames consecutive → dt=0.05
+N_OUTPUT_FRAMES = 20    # 20 output frames per sample
 N_SAMPLES = 20          # 20 sliding windows per simulation
-T_IN = 10               # temporal dimension in x array (= N_SAMPLES // 2, matches model)
-MIN_SNAPSHOTS = N_INPUT_FRAMES + (N_OUTPUT_FRAMES - 1) * OUTPUT_SPACING + 1  # = 881
+T_IN = 20               # temporal dimension in x array (= N_OUTPUT_FRAMES, matches model)
+MIN_SNAPSHOTS = N_INPUT_FRAMES + N_OUTPUT_FRAMES + N_SAMPLES - 1  # = 44
 
 
 def load_params(params_file):
@@ -140,8 +140,8 @@ def build_windows(snapshots, nu, mu):
         x_all[sample_idx, :, :, :, 5] = nu
         x_all[sample_idx, :, :, :, 6] = mu
 
-        # Output: 10 frames spaced OUTPUT_SPACING apart, starting at frame 160
-        output_frames = [snapshots[N_INPUT_FRAMES + k * OUTPUT_SPACING] for k in range(N_OUTPUT_FRAMES)]
+        # Output: 20 consecutive frames immediately after the input window
+        output_frames = [snapshots[start + N_INPUT_FRAMES + k * OUTPUT_SPACING] for k in range(N_OUTPUT_FRAMES)]
         for t, frame in enumerate(output_frames):
             y_all[sample_idx, :, :, t] = frame
 

@@ -2,10 +2,10 @@
 FNO Result Visualization Script
 
 Loads pre-computed predictions from inference.py (pred_sim_<id>.npy) and generates:
-- 200 PNGs per test file: 3-panel (target | prediction | error) for each of
-  20 samples × 10 timesteps, labeled with absolute simulation frame numbers
+- 400 PNGs per test file: 3-panel (target | prediction | error) for each of
+  20 samples × 20 timesteps, labeled with absolute simulation frame numbers
 
-Frame numbering: sample s, output step t → absolute frame 160 + s + t*80
+Frame numbering: sample s, output step t → absolute frame 5 + s + t
 
 Usage:
     python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
@@ -67,7 +67,7 @@ def main():
 
         for s in tqdm(range(n_samples), desc=f"Samples sim_{sim_id}", unit="s", leave=False):
             for t in range(pred.shape[3]):
-                frame = 160 + s + t * 80
+                frame = 5 + s + t
                 fname = vis_dir / f'frame_{frame:04d}_sim_{sim_id}.png'
 
                 if fname.exists() and not opt.force:

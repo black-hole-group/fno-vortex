@@ -54,11 +54,11 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 
 **FNO3d Model (`src/architecture.py` and duplicated in `src/train.py`):**
 - Instantiated as `FNO3d(64, 64, 5, 30)` — modes_x=64, modes_y=64, modes_t=5, width=30
-- **Input to `forward()`:** `(batch, 128, 128, T_in, 7)` where T_in=10 and the 7 channels are:
+- **Input to `forward()`:** `(batch, 128, 128, T_in, 7)` where T_in=20 and the 7 channels are:
   - 5 input simulation frames (temporal snapshots of one field)
   - 2 physical parameters: kinematic viscosity ν and Ohmic diffusivity μ/η
 - Internally, `get_grid()` appends 3 coordinate channels (x, y, t grid) → 10 channels total, then lifted by `fc0 = Linear(10, width)`
-- **Output:** `(batch, 128, 128, 10)` — 10 predicted future timesteps
+- **Output:** `(batch, 128, 128, 20)` — 20 predicted future timesteps
 - 5 Fourier layers (conv0–conv4) each running in parallel with a 1×1×1 convolution (w0–w4), summed and passed through GELU activation
 - Padding of 6 applied in the time dimension to handle non-periodic temporal boundaries
 - Projection: `fc1 = Linear(width, 128)` → GELU → `fc2 = Linear(128, 1)`
@@ -79,8 +79,8 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 - Training data: `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
 - Test data: `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
 - For the FARGO3D dataset, `<param>` includes the solver prefix, e.g. `fargo3d/density`
-- Each `x` file has shape `(20, 128, 128, 10, 7)` — 20 samples, 128×128 spatial grid, 10 temporal frames, 7 channels
-- Each `y` file has shape `(20, 128, 128, 10)` — same samples, 10 output frames
+- Each `x` file has shape `(20, 128, 128, 20, 7)` — 20 samples, 128×128 spatial grid, 20 temporal frames, 7 channels
+- Each `y` file has shape `(20, 128, 128, 20)` — same samples, 20 output frames
 
 **Batch construction:**
 - Training iterates over all available files (counted dynamically); within each file, samples are loaded in slices of 4 (`l:l+4` for l in 0, 4, 8, 12), giving 4 gradient steps per file
@@ -152,9 +152,9 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 - Reads VTK files via `idefix-pytools` (`pip install idefix-pytools`)
 - Fields extracted: `RHO→density`, `VX1→vx`, `VX2→vy`, `BX1→bx`, `BX2→by`
 - Builds 20 sliding-window samples per simulation (start frame shifts by 1 each sample)
-  - Input: 5 frames spaced 20 apart from frames 0–159 (dt=1.0 code units)
-  - Output: 10 frames spaced 80 apart starting at frame 160 (dt=4.0 code units)
-- Appends ν and μ as channels 5–6 of `x`, broadcast over (128, 128, 10)
+  - Input: 5 consecutive frames starting at `start` (dt=0.05 code units each)
+  - Output: 20 consecutive frames immediately after input (frames start+5 .. start+24)
+- Appends ν and μ as channels 5–6 of `x`, broadcast over (128, 128, 20)
 - Writes `data/<param>/[train|test]/[x|y]_<idx>.npy`
 
 **Note on file counts:** with 25 simulations (23 train + 2 test), `convert_to_npy.py` produces 23 train files and 2 test files per field. Both `train.py` and `inference.py` dynamically count available files, so no code changes are needed when the number of simulations changes.
@@ -172,7 +172,7 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 - **Problem:** 2D Orszag–Tang vortex on a 128×128 periodic spatial grid
 - **Numerical solvers:** FARGO3D (domain [0, 2π]²) and Idefix (domain [0, 1]², HLLD solver, UCT contact EMF, γ=5/3)
 - **Key parameters:** kinematic viscosity ν and Ohmic diffusivity η (referred to as μ in some parts of the code), sampled in [10⁻⁵, 5×10⁻²]
-- **Training regime:** model is conditioned on the first ~160 frames (≈ 0.73 Alfvén times) and predicts frames 160–1000 (≈ 0.73–4.39 Alfvén times)
+- **Training regime:** model is conditioned on 5 consecutive input frames and predicts the next 20 consecutive frames (short-horizon, fine-grained temporal prediction)
 - **Test cases (held out):** ν = μ = 5×10⁻⁵ and ν = μ = 3×10⁻⁴
 
 ## Key Implementation Notes

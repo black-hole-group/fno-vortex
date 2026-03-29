@@ -293,7 +293,7 @@ def main():
                     else:
                         autocast_context = nullcontext()
                     with autocast_context:
-                        out = model(x).view(actual_bs, 128, 128, 10)
+                        out = model(x).view(actual_bs, 128, 128, 20)
 
                         mae = F.l1_loss(out, y, reduction='mean')
 
@@ -328,7 +328,7 @@ def main():
                         else:
                             val_autocast = nullcontext()
                         with val_autocast:
-                            ob = model(xb).view(ab, 128, 128, 10)
+                            ob = model(xb).view(ab, 128, 128, 20)
                             val_mae_b = F.l1_loss(ob, yb, reduction='mean')
                             y_dn = y_min_t + ((yb + 1) * (y_max_t - y_min_t) / 2)
                             o_dn = y_min_t + ((ob + 1) * (y_max_t - y_min_t) / 2)
