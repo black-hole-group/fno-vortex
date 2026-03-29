@@ -36,12 +36,12 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 ### Inference
 
 ```bash
-python src/inference.py --param <parameter_name> [--experiments-dir <path>]
+python src/inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
 ```
 
 - Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
-- Runs over all available test files (counted dynamically), saves predictions to `experiments/<param>/visualizations/pred_<j>.npy`
-- **Not autoregressive (teacher-forced):** each test file contains pre-assembled ground-truth windows. The model runs one forward pass per window; predictions are never fed back as inputs. Reported metrics reflect teacher-forced performance, not free-running rollout.
+- Runs over all available test files (counted dynamically), saves predictions to `experiments/<param>/visualizations/pred_sim_<id>.npy`
+- `--rollout-steps N` (default 1): teacher-forced mode uses ground-truth inputs for every window. With N>1, autoregressive rollout feeds the last 5 of 20 predicted frames back as input and repeats N times, producing 20×N frames; saved as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`.
 
 ### Visualization
 
@@ -154,7 +154,7 @@ Two numerical solvers have been used:
 
 3. **Preprocessing script:** `data/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
 
-4. **No autoregressive rollout:** inference is teacher-forced — the model always receives ground-truth frames as input, never its own predictions. Implementing free-running rollout would require a loop in `inference.py` that slides the input window forward using predicted frames.
+4. **Autoregressive error accumulation:** the `--rollout-steps N` flag in `inference.py` enables free-running rollout, but prediction errors compound at each step. Teacher-forced (`--rollout-steps 1`) always gives better metrics.
 
 ## Path Conventions
 

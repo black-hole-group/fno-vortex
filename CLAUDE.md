@@ -31,11 +31,12 @@ python train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 **Running inference:**
 ```bash
 cd src
-python inference.py --param <parameter_name>
+python inference.py --param <parameter_name> [--rollout-steps N]
 ```
 - Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
-- Runs over 21 test files and saves denormalized predictions as `.npy` arrays to
-  `experiments/<param>/visualizations/pred_<j>.npy`
+- Runs over all test files and saves denormalized predictions as `.npy` arrays to
+  `experiments/<param>/visualizations/pred_sim_<id>.npy`
+- `--rollout-steps N` (default 1): with N=1, runs teacher-forced inference (each window uses ground-truth inputs). With N>1, runs autoregressive rollout: predicts 20 frames, feeds the last 5 predicted frames back as input, and repeats N times total, producing 20×N frames. Saves as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`
 
 **Visualizing results** (run after inference):
 ```bash
@@ -178,7 +179,7 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
 ## Key Implementation Notes
 
 - The model operates on CUDA by default (`.cuda()` calls throughout).
-- **Inference is teacher-forced, not autoregressive:** at inference time every prediction window receives ground-truth FARGO3D frames as input — the model's own predictions are never fed back in. The 21 test files contain pre-assembled windows that already cover all temporal segments; the model runs one forward pass per window independently. Benchmarked performance therefore reflects teacher-forced evaluation and will degrade if predictions were fed back as inputs (autoregressive rollout).
+- **Inference supports both teacher-forced and autoregressive modes:** by default (`--rollout-steps 1`) every prediction window receives ground-truth frames as input. With `--rollout-steps N > 1`, the last 5 of each step's 20 predicted frames are fed back as input for the next step (autoregressive rollout). Teacher-forced performance is always better; autoregressive error compounds across steps.
 - Batch normalization layers (`bn0`–`bn3`) are defined in `FNO3d.__init__` but never called in `forward()`
 - The time dimension is padded by 6 before the Fourier layers and unpadded after (`x[..., :-self.padding]`)
 - Spatial dimensions are not padded (the Orszag–Tang problem has periodic spatial boundaries)
