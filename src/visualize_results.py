@@ -19,7 +19,6 @@ import subprocess
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm
 from pathlib import Path
 import os
@@ -34,6 +33,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--param", type=str, default='density')
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
+    parser.add_argument("--force", action="store_true", help="Regenerate PNGs even if they already exist")
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
@@ -58,6 +58,11 @@ def main():
         pred = np.load(pred_path).squeeze(-1)               # (20, 128, 128, 10)
         y    = np.load(test_dir / f"y_sim_{sim_id}.npy")   # (20, 128, 128, 10)
 
+        # Global color ranges for this simulation — fixed across all frames
+        vmin_global = min(pred.min(), y.min())
+        vmax_global = max(pred.max(), y.max())
+        eabs_global = np.max(np.abs(y - pred))
+
         n_samples = pred.shape[0]  # 20
 
         for s in tqdm(range(n_samples), desc=f"Samples sim_{sim_id}", unit="s", leave=False):
@@ -65,7 +70,7 @@ def main():
                 frame = 160 + s + t * 80
                 fname = vis_dir / f'frame_{frame:04d}_sim_{sim_id}.png'
 
-                if fname.exists():
+                if fname.exists() and not opt.force:
                     skipped_pngs += 1
                     continue
 
@@ -73,32 +78,25 @@ def main():
                 pred_t = pred[s, :, :, t]
                 error  = target - pred_t
 
-                vmin = min(target.min(), pred_t.min())
-                vmax = max(target.max(), pred_t.max())
-                eabs = max(abs(error.min()), abs(error.max()))
-
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
                 fig.suptitle(f'{opt.param}  |  sim {sim_id}  |  frame {frame}', fontsize=12)
 
-                im0 = axes[0].pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
+                im0 = axes[0].pcolormesh(target, vmin=vmin_global, vmax=vmax_global, cmap='viridis')
                 axes[0].set_title('Target')
                 axes[0].set_aspect('equal')
 
-                im1 = axes[1].pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
+                im1 = axes[1].pcolormesh(pred_t, vmin=vmin_global, vmax=vmax_global, cmap='viridis')
                 axes[1].set_title('Prediction')
                 axes[1].set_aspect('equal')
 
-                im2 = axes[2].pcolormesh(error, vmin=-eabs, vmax=eabs, cmap='RdBu_r')
+                im2 = axes[2].pcolormesh(error, vmin=-eabs_global, vmax=eabs_global, cmap='RdBu_r')
                 axes[2].set_title('Error (Target - Prediction)')
                 axes[2].set_aspect('equal')
 
                 for ax, im in zip(axes, [im0, im1, im2]):
-                    divider = make_axes_locatable(ax)
-                    cax = divider.append_axes('bottom', size='5%', pad=0.4)
-                    fig.colorbar(im, cax=cax, orientation='horizontal')
+                    fig.colorbar(im, ax=ax, location='bottom', shrink=0.9, pad=0.08)
 
-                plt.tight_layout()
-                plt.savefig(fname, dpi=100, bbox_inches='tight')
+                plt.savefig(fname, dpi=100)
                 plt.close(fig)
                 total_pngs += 1
 
