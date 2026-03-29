@@ -14,7 +14,7 @@ Sliding window details:
   - 1000 snapshots total (frames 0-999, dt=0.05)
   - Input  : 5 consecutive frames starting at `start` (dt=0.05 code units each)
   - Output : 20 consecutive frames immediately after input (frames start+5 .. start+24)
-  - 20 sliding windows per simulation (start frames 0..19)
+  - 20 sliding windows per simulation, evenly strided (stride=51, start frames 0,51,102,...,969)
   - x channels 5-6: nu and mu broadcast to fill (128, 128, 20)
 
 Usage:
@@ -78,7 +78,11 @@ OUTPUT_SPACING = 1      # output frames consecutive → dt=0.05
 N_OUTPUT_FRAMES = 20    # 20 output frames per sample
 N_SAMPLES = 20          # 20 sliding windows per simulation
 T_IN = 20               # temporal dimension in x array (= N_OUTPUT_FRAMES, matches model)
-MIN_SNAPSHOTS = N_INPUT_FRAMES + N_OUTPUT_FRAMES + N_SAMPLES - 1  # = 44
+# Stride between window start frames: evenly spaces N_SAMPLES windows across the full
+# timeline so the last window starts at frame N_SNAPSHOTS - N_INPUT_FRAMES - N_OUTPUT_FRAMES.
+# With defaults: (1000 - 5 - 20) // (20 - 1) = 51, covering frames 0..969.
+WINDOW_STRIDE = (N_SNAPSHOTS - N_INPUT_FRAMES - N_OUTPUT_FRAMES) // (N_SAMPLES - 1)
+MIN_SNAPSHOTS = N_INPUT_FRAMES + N_OUTPUT_FRAMES + (N_SAMPLES - 1) * WINDOW_STRIDE
 
 
 def load_params(params_file):
@@ -129,7 +133,7 @@ def build_windows(snapshots, nu, mu):
     y_all = np.zeros((N_SAMPLES, H, W, N_OUTPUT_FRAMES), dtype=np.float32)
 
     for sample_idx in range(N_SAMPLES):
-        start = sample_idx  # slide starting frame by 1 each sample
+        start = sample_idx * WINDOW_STRIDE  # evenly spaced across full timeline
 
         # Input: 5 frames spaced INPUT_SPACING apart, starting at `start`
         input_frames = [snapshots[start + k * INPUT_SPACING] for k in range(N_INPUT_CHANNELS)]
