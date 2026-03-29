@@ -1,14 +1,15 @@
 """
 Generate the (nu, mu) parameter table for the Orszag-Tang vortex simulations.
 
-25 simulations total:
+Default (50 simulations, --nval 6):
   - 2 hardcoded test cases: nu=mu=5e-5 and nu=mu=3e-4
-  - 23 randomly sampled, log-uniformly in [1e-5, 5e-2] for both nu and mu independently
+  - 6 randomly chosen validation cases (log-uniform in [1e-5, 5e-2])
+  - 42 training cases (remainder)
 
 Output: params.csv with columns: sim_id, nu, mu, split
 
 Usage:
-  python generate_params.py [--seed SEED] [--nsims N]
+  python generate_params.py [--seed SEED] [--nsims N] [--nval K]
 """
 
 import argparse
@@ -28,17 +29,28 @@ TEST_CASES = [
 parser = argparse.ArgumentParser(description="Generate simulation parameter table")
 parser.add_argument("--seed", type=int, default=42,
                     help="Random seed for reproducibility (default: 42)")
-parser.add_argument("--nsims", type=int, default=25,
-                    help="Total number of simulations (default: 25)")
+parser.add_argument("--nsims", type=int, default=50,
+                    help="Total number of simulations (default: 50)")
+parser.add_argument("--nval", type=int, default=6,
+                    help="Number of validation simulations (default: 6)")
 args = parser.parse_args()
 
 n_random = args.nsims - len(TEST_CASES)
 if n_random < 0:
-    parser.error(f"--nsims must be >= {len(TEST_CASES)} (number of hardcoded test cases)")
+    parser.error(
+        f"--nsims must be >= {len(TEST_CASES)} (number of hardcoded test cases)"
+    )
+if not 0 <= args.nval <= n_random:
+    parser.error(
+        f"--nval must be between 0 and {n_random} "
+        f"(number of non-test simulations)"
+    )
 
 rng = np.random.default_rng(args.seed)
 nu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, n_random)
 mu_rand = 10 ** rng.uniform(LOG_LOW, LOG_HIGH, n_random)
+
+val_indices = set(rng.choice(n_random, size=args.nval, replace=False))
 
 rows = []
 sim_id = 0
@@ -47,8 +59,9 @@ for nu, mu in TEST_CASES:
     rows.append({"sim_id": sim_id, "nu": nu, "mu": mu, "split": "test"})
     sim_id += 1
 
-for nu, mu in zip(nu_rand, mu_rand):
-    rows.append({"sim_id": sim_id, "nu": nu, "mu": mu, "split": "train"})
+for idx, (nu, mu) in enumerate(zip(nu_rand, mu_rand)):
+    split = "val" if idx in val_indices else "train"
+    rows.append({"sim_id": sim_id, "nu": nu, "mu": mu, "split": split})
     sim_id += 1
 
 output_path = "params.csv"
@@ -59,6 +72,7 @@ with open(output_path, "w", newline="") as f:
 
 print(f"Wrote {len(rows)} parameter sets to {output_path}  (seed={args.seed})")
 print(f"  Test  : {sum(1 for r in rows if r['split'] == 'test')}")
+print(f"  Val   : {sum(1 for r in rows if r['split'] == 'val')}")
 print(f"  Train : {sum(1 for r in rows if r['split'] == 'train')}")
 
 # Print summary table
@@ -69,14 +83,17 @@ for r in rows:
 
 # Plot mu vs nu
 train_rows = [r for r in rows if r["split"] == "train"]
+val_rows   = [r for r in rows if r["split"] == "val"]
 test_rows  = [r for r in rows if r["split"] == "test"]
 
 fig, ax = plt.subplots()
 
 ax.scatter([r["nu"] for r in train_rows], [r["mu"] for r in train_rows],
            color="steelblue", label="train", zorder=3)
+ax.scatter([r["nu"] for r in val_rows], [r["mu"] for r in val_rows],
+           color="darkorange", label="val", zorder=4)
 ax.scatter([r["nu"] for r in test_rows], [r["mu"] for r in test_rows],
-           marker="*", s=150, color="black", label="test", zorder=4)
+           marker="*", s=150, color="black", label="test", zorder=5)
 
 lim_lo, lim_hi = 10**LOG_LOW, 10**LOG_HIGH
 ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], "k--", lw=1, label=r"$\mu = \nu$")

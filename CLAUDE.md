@@ -49,7 +49,7 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
   - 1 GIF:  `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
 - Outputs saved to `experiments/<param>/visualizations/`
 
-**Note on paths:** Data is read from `data/<param>/[train|test]/` and results are written to `experiments/<param>/`. All scripts resolve paths relative to the repository root using `__file__`, so they can be run from any working directory.
+**Note on paths:** Data is read from `data/<param>/[train|val|test]/` and results are written to `experiments/<param>/`. All scripts resolve paths relative to the repository root using `__file__`, so they can be run from any working directory.
 
 ## Architecture Details
 
@@ -78,7 +78,8 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 
 **Input data structure:**
 - Training data: `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
-- Test data: `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
+- Validation data: `data/<param>/val/[x|y]_<idx>.npy` (count determined dynamically)
+- Test data: `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically; used only for final evaluation, never during training)
 - For the FARGO3D dataset, `<param>` includes the solver prefix, e.g. `fargo3d/density`
 - Each `x` file has shape `(20, 128, 128, 20, 7)` — 20 samples, 128×128 spatial grid, 20 temporal frames, 7 channels
 - Each `y` file has shape `(20, 128, 128, 20)` — same samples, 20 output frames
@@ -126,10 +127,11 @@ The current data generation pipeline uses Idefix. All scripts live in `data/idef
 
 **Step 1 — generate parameter table:**
 ```bash
-python generate_params.py [--seed 42] [--nsims 25]
+python generate_params.py [--seed 42] [--nsims 50] [--nval 6]
 ```
 - Writes `params.csv` with columns `sim_id, nu, mu, split`
-- 2 hardcoded test cases (ν=μ=5×10⁻⁵ and ν=μ=3×10⁻⁴), remainder random log-uniform in [10⁻⁵, 5×10⁻²]
+- 2 hardcoded test cases (ν=μ=5×10⁻⁵ and ν=μ=3×10⁻⁴), `--nval` (default 6) randomly chosen for val, remainder train
+- Current dataset: 50 simulations → 42 train + 6 val + 2 test
 
 **Step 2 — build Idefix binary** (once):
 ```bash
@@ -156,9 +158,9 @@ python convert_to_npy.py [--runs-dir runs] [--params params.csv] [--output-dir .
   - Input: 5 consecutive frames starting at `start` (dt=0.05 code units each)
   - Output: 20 consecutive frames immediately after input (frames start+5 .. start+24)
 - Appends ν and μ as channels 5–6 of `x`, broadcast over (128, 128, 20)
-- Writes `data/<param>/[train|test]/[x|y]_<idx>.npy`
+- Writes `data/<param>/[train|val|test]/[x|y]_<idx>.npy`
 
-**Note on file counts:** with 25 simulations (23 train + 2 test), `convert_to_npy.py` produces 23 train files and 2 test files per field. Both `train.py` and `inference.py` dynamically count available files, so no code changes are needed when the number of simulations changes.
+**Note on file counts:** with 50 simulations (42 train + 6 val + 2 test), `convert_to_npy.py` produces the corresponding files per field. Both `train.py` and `inference.py` dynamically count available files, so no code changes are needed when the number of simulations changes.
 
 ### FARGO3D (original dataset)
 

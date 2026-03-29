@@ -7,6 +7,8 @@ sliding-window input/output blocks matching the format expected by train.py.
 Output per physical field (density, vx, vy, bx, by):
   data/<param>/train/x_<idx>.npy  shape (20, 128, 128, 20, 7)
   data/<param>/train/y_<idx>.npy  shape (20, 128, 128, 20)
+  data/<param>/val/x_<idx>.npy    shape (20, 128, 128, 20, 7)
+  data/<param>/val/y_<idx>.npy    shape (20, 128, 128, 20)
   data/<param>/test/x_<idx>.npy   shape (20, 128, 128, 20, 7)
   data/<param>/test/y_<idx>.npy   shape (20, 128, 128, 20)
 
@@ -179,12 +181,24 @@ def main():
 
     n_converted = 0
     n_skipped = 0
+    split_counts: dict = {}
 
     for row in iterable:
         sim_id = int(row["sim_id"])
         nu = float(row["nu"])
         mu = float(row["mu"])
         split = row["split"]
+
+        if split not in {"train", "val", "test"}:
+            print(
+                f"\n  WARNING: sim_{sim_id:03d} has unknown split "
+                f"'{split}'; skipping"
+            )
+            n_skipped += 1
+            if bar:
+                bar.update(1)
+            continue
+
         run_dir = runs_dir / f"sim_{sim_id:03d}"
 
         if status:
@@ -221,6 +235,7 @@ def main():
         if bar:
             bar.update(1)
         n_converted += 1
+        split_counts[split] = split_counts.get(split, 0) + 1
 
     if status:
         status.close()
@@ -229,6 +244,10 @@ def main():
 
     print("\nConversion complete.")
     print(f"Converted: {n_converted}  Skipped: {n_skipped}")
+    for split_name in ("train", "val", "test"):
+        count = split_counts.get(split_name, 0)
+        if count or split_name in {"train", "test"}:
+            print(f"  Converted {split_name}: {count}")
 
 
 if __name__ == "__main__":

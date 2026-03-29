@@ -1,6 +1,7 @@
 Bleeding edge:
 - Training data generated with Idefix instead of Fargo3d
-- Implemented validation and early stopping criterion in order to avoid training with
-an excessive number of epochs.
+- Implemented explicit train/val/test split: val is used for model selection
+  and early stopping; test is final evaluation only (never seen during training)
 - Given 5 frames, predict the next 20 ones
-- Autoregressive rolloput! Uses its own predictions to forecast the entire evolution.
+- Autoregressive rollout! Uses its own predictions to forecast the entire evolution
+- Current Idefix dataset: 50 simulations total (42 train / 6 val / 2 test)

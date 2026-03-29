@@ -93,8 +93,15 @@ def main():
     vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
     os.makedirs(vis_dir, exist_ok=True)
 
-    checkpoint_path = opt.checkpoint if opt.checkpoint else \
-        os.path.join(exp_dir, opt.param, 'checkpoints', 'model_64_30.pt')
+    checkpoint_path = opt.checkpoint
+    if checkpoint_path is None:
+        best_pt = os.path.join(
+            exp_dir, opt.param, 'checkpoints', 'model_best.pt'
+        )
+        default_pt = os.path.join(
+            exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'
+        )
+        checkpoint_path = best_pt if os.path.exists(best_pt) else default_pt
 
     print(f"Processing parameter: {opt.param}")
 

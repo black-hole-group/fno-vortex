@@ -116,7 +116,7 @@ def main():
     os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
 
     n_train_available = len(list((Path(DATA_DIR) / opt.param / 'train').glob('x_sim_*.npy')))
-    n_test_available = len(list((Path(DATA_DIR) / opt.param / 'test').glob('x_sim_*.npy')))
+    n_val_available = len(list((Path(DATA_DIR) / opt.param / 'val').glob('x_sim_*.npy')))
 
     learning_rate = 0.001
     scheduler_step = 500
@@ -125,7 +125,7 @@ def main():
     batch_size = opt.batch_size
     samples_per_file = 20
     train_files_limit = None
-    test_files_limit = None
+    val_files_limit = None
     viz_every = 50
     checkpoint_every = 100
 
@@ -134,7 +134,7 @@ def main():
         batch_size = 4
         samples_per_file = 4
         train_files_limit = 1
-        test_files_limit = 1
+        val_files_limit = 1
         viz_every = 1
         checkpoint_every = 1
 
@@ -159,7 +159,7 @@ def main():
 
     # Load all data into memory once — avoids ~460K disk reads over 10k epochs
     print(
-        f"Loading {n_train_available} train + {n_test_available} test files into memory..."
+        f"Loading {n_train_available} train + {n_val_available} val files into memory..."
     )
     train_cache = load_dataset(
         opt.param,
@@ -167,21 +167,22 @@ def main():
         max_files=train_files_limit,
         max_samples=samples_per_file,
     )
-    test_cache = load_dataset(
+    val_cache = load_dataset(
         opt.param,
-        'test',
-        max_files=test_files_limit,
+        'val',
+        max_files=val_files_limit,
         max_samples=samples_per_file,
     )
     print("Data loaded.")
 
-    if len(train_cache) == 0 or len(test_cache) == 0:
+    if len(train_cache) == 0 or len(val_cache) == 0:
         raise RuntimeError(
-            "No training or test files were loaded. Check the dataset path."
+            "No training or validation files were loaded. "
+            "Check that data/<param>/train/ and data/<param>/val/ exist."
         )
 
     n_train = len(train_cache)
-    n_test = len(test_cache)
+    n_val = len(val_cache)
 
     n_params = sum(p.numel() for p in model.parameters())
     x0_shape = train_cache[0][0].shape
@@ -191,14 +192,14 @@ def main():
     print(f"  Parameters : {n_params:,}")
     print(f"  Input shape: {tuple(x0_shape)}  (samples, x, y, t, channels)")
     print(f"  Output shape: {tuple(y0_shape)}  (samples, x, y, t)")
-    print(f"  Train files: {n_train}  |  Test files: {n_test}")
+    print(f"  Train files: {n_train}  |  Val files: {n_val}")
     print(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}")
     print(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})")
     print(f"  Param: {opt.param}")
     if opt.fast:
         print(
             "  Fast mode: enabled "
-            f"(train files={train_files_limit}, test files={test_files_limit}, "
+            f"(train files={train_files_limit}, val files={val_files_limit}, "
             f"samples/file={samples_per_file}, viz every epoch)"
         )
     if autocast_enabled:
@@ -218,6 +219,7 @@ def main():
     log10_mae_history = []
     log10_val_mae_history = []
     best_val_loss = float('inf')
+    best_epoch = 0
     epochs_no_improve = 0
     best_model_path = os.path.join(checkpoint_dir, 'model_best.pt')
 
@@ -232,6 +234,7 @@ def main():
             'log10_mae_history': log10_mae_history,
             'log10_val_mae_history': log10_val_mae_history,
             'best_val_loss': best_val_loss,
+            'best_epoch': best_epoch,
             'epochs_no_improve': epochs_no_improve,
         }
         np.save(loss_path, loss_function)
@@ -249,6 +252,7 @@ def main():
         log10_mae_history = checkpoint.get('log10_mae_history', log10_mae_history)
         log10_val_mae_history = checkpoint.get('log10_val_mae_history', log10_val_mae_history)
         best_val_loss = checkpoint.get('best_val_loss', best_val_loss)
+        best_epoch = checkpoint.get('best_epoch', best_epoch)
         epochs_no_improve = checkpoint.get('epochs_no_improve', epochs_no_improve)
         start_epoch = checkpoint.get('epoch', -1) + 1
         print(f"Resumed from epoch {start_epoch}")
@@ -260,7 +264,7 @@ def main():
         log.write(f"  Resume: {opt.resume}\n")
         log.write(f"  FNO3d(modes=64/64/5, width=30)  |  Parameters: {n_params:,}\n")
         log.write(f"  Input shape: {tuple(x0_shape)}  |  Output shape: {tuple(y0_shape)}\n")
-        log.write(f"  Train files: {n_train}  |  Test files: {n_test}\n")
+        log.write(f"  Train files: {n_train}  |  Val files: {n_val}\n")
         if opt.fast:
             log.write(
                 f"  Fast mode file/sample caps already applied before logging\n"
@@ -270,7 +274,7 @@ def main():
         if opt.fast:
             log.write(
                 "  Fast mode: enabled "
-                f"(train files={train_files_limit}, test files={test_files_limit}, "
+                f"(train files={train_files_limit}, val files={val_files_limit}, "
                 f"samples/file={samples_per_file}, viz every epoch)\n"
             )
         if autocast_enabled:
@@ -335,13 +339,13 @@ def main():
             scheduler.step()
             model.eval()
 
-            # --- Validation pass ---
+            # --- Validation pass (uses val split, never test) ---
             val_steps = 0
             val_mae_sum = 0.0
             val_loss_sum = 0.0
             with torch.no_grad():
-                for j in range(n_test):
-                    x_t, y_t, y_min_t, y_max_t = test_cache[j]
+                for j in range(n_val):
+                    x_t, y_t, y_min_t, y_max_t = val_cache[j]
                     for l in range(0, len(x_t), batch_size):
                         xb = x_t[l:l+batch_size].cuda()
                         yb = y_t[l:l+batch_size].cuda()
@@ -364,26 +368,28 @@ def main():
             val_mae  = val_mae_sum  / max(1, val_steps)
             val_loss = val_loss_sum / max(1, val_steps)
 
-            # --- Early stopping ---
-            if opt.patience > 0:
-                if val_loss < best_val_loss - 1e-4:
-                    best_val_loss = val_loss
-                    epochs_no_improve = 0
-                    torch.save(model.state_dict(), best_model_path)
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= opt.patience:
-                        print(f"\nEarly stopping at epoch {ep+1} "
-                              f"(no improvement for {opt.patience} epochs, "
-                              f"best val loss {best_val_loss:.4e}).")
-                        save_checkpoint(ep)
-                        break
+            # --- Best checkpoint + early stopping ---
+            # Save best model whenever val improves, regardless of patience setting.
+            if val_loss < best_val_loss - 1e-4:
+                best_val_loss = val_loss
+                best_epoch = ep + 1
+                epochs_no_improve = 0
+                torch.save(model.state_dict(), best_model_path)
+            else:
+                epochs_no_improve += 1
+                if opt.patience > 0 and epochs_no_improve >= opt.patience:
+                    print(f"\nEarly stopping at epoch {ep+1} "
+                          f"(no improvement for {opt.patience} epochs, "
+                          f"best val loss {best_val_loss:.4e} at epoch "
+                          f"{best_epoch}).")
+                    save_checkpoint(ep)
+                    break
 
             if (ep + 1) % viz_every == 0 or ep == 0:
                 with torch.no_grad():
-                    j = np.random.randint(n_test)
-                    xt = test_cache[j][0][:batch_size].cuda()
-                    yt = test_cache[j][1][:batch_size].cpu().numpy()
+                    j = np.random.randint(n_val)
+                    xt = val_cache[j][0][:batch_size].cuda()
+                    yt = val_cache[j][1][:batch_size].cpu().numpy()
 
                     out = model(xt).cpu().detach().numpy()
 
@@ -465,9 +471,14 @@ def main():
     h, rem = divmod(int(elapsed), 3600)
     m, s = divmod(rem, 60)
     print(f"\nTraining complete. Total time: {h}h {m}m {s}s")
+    print(f"Best val loss: {best_val_loss:.4e}  (epoch {best_epoch})")
     with open(log_path, 'a') as log:
         log.write(f"{'-'*70}\n")
-        log.write(f"  Run finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  Total time: {h}h {m}m {s}s\n")
+        log.write(
+            f"  Run finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
+            f"Total time: {h}h {m}m {s}s  |  "
+            f"Best val loss: {best_val_loss:.4e} at epoch {best_epoch}\n"
+        )
 
 
 if __name__ == '__main__':

@@ -120,7 +120,9 @@ python inference.py --param density
 
 ---
 **NOTE ABOUT FORECASTING**  
-Each of the 21 test files contains pre-assembled ground-truth windows covering a different temporal segment of the FARGO3D simulation. At inference time the model receives real simulation frames as input for every window; *its own predictions are never fed back in*. This means the reported metrics reflect teacher-forced performance, which is typically much better than free-running (autoregressive) inference where prediction errors would accumulate over time. 
+At inference time the model receives ground-truth simulation frames as input for every window; *its own predictions are never fed back in* (teacher-forced mode, the default). This means reported metrics reflect teacher-forced performance, which is typically much better than free-running (autoregressive) inference where prediction errors accumulate over time.
+
+**The `test` split is reserved for final inference only.** Training validates against the separate `val` split so that `test` remains an unbiased final evaluation set.
 
 ---
 
@@ -144,8 +146,8 @@ The model uses a composite loss (defined in `src/utilities.py`):
 ### Data Loading
 
 - All data cached in memory at startup to avoid repeated disk I/O
-- Training files: 88 | Test files: 4 (Idefix dataset)
-- Batch size per gradient update: 4 samples
+- Train files: 42 | Val files: 6 | Test files: 2 (Idefix dataset, default 50-simulation run)
+- Training validates against the **val** split; the **test** split is held out for final inference only
 
 ## Data Format
 
@@ -155,13 +157,17 @@ The model uses a composite loss (defined in `src/utilities.py`):
 data/
 ├── density/
 │   ├── train/
-│   │   ├── x_0.npy   # Input: 5 frames + ν + μ
-│   │   ├── y_0.npy   # Target: next 10 frames
-│   │   └── ...       # x_1.npy, y_1.npy, ..., x_89.npy, y_89.npy
+│   │   ├── x_sim_002.npy   # Input: 5 frames + ν + μ
+│   │   ├── y_sim_002.npy   # Target: next 20 frames
+│   │   └── ...             # 42 files for default 50-simulation Idefix run
+│   ├── val/
+│   │   ├── x_sim_NNN.npy
+│   │   ├── y_sim_NNN.npy
+│   │   └── ...             # 6 files for default setup
 │   └── test/
-│       ├── x_0.npy
-│       ├── y_0.npy
-│       └── ...       # up to x_20.npy, y_20.npy
+│       ├── x_sim_000.npy
+│       ├── y_sim_001.npy
+│       └── ...             # 2 fixed holdout files
 ├── vy/
 ├── by/
 └── ...

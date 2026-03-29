@@ -23,13 +23,15 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 ```
 
 - **Parameters:** `density`, `vy`, `by` (defaults to `density`)
-- **Epochs:** 10,000
+- **Epochs:** 5,000
 - **Learning rate:** 0.001 with StepLR scheduler (step=500, gamma=0.5)
-- **Batch size:** 4
+- **Batch size:** 16
 - **Loss:** MAE + Relative L2 (`LpLoss`)
+- **Validation:** uses `data/<param>/val/` for model selection and early stopping; `test/` is never read during training
 - `--fast` runs a tiny smoke test with fewer files, fewer samples, and more frequent visualizations
 - **Outputs:**
-  - Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
+  - Latest model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
+  - Best model checkpoint: `experiments/<param>/checkpoints/model_best.pt`
   - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
   - Validation images: `experiments/<param>/visualizations/`
 
@@ -39,7 +41,7 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 python src/inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
 ```
 
-- Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
+- Loads model from `experiments/<param>/checkpoints/model_best.pt` if it exists, otherwise `model_64_30.pt` (or `--checkpoint` if given)
 - Runs over all available test files (counted dynamically), saves predictions to `experiments/<param>/visualizations/pred_sim_<id>.npy`
 - `--rollout-steps N` (default 1): teacher-forced mode uses ground-truth inputs for every window. With N>1, autoregressive rollout feeds the last 5 of 20 predicted frames back as input and repeats N times, producing 20×N frames; saved as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`.
 
@@ -65,7 +67,8 @@ python src/visualize_results.py --param <parameter_name> [--experiments-dir <pat
 ### Input Data Structure
 
 - **Training:** `data/<param>/train/[x|y]_<idx>.npy` (count determined dynamically)
-- **Test:** `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically)
+- **Validation:** `data/<param>/val/[x|y]_<idx>.npy` (count determined dynamically)
+- **Test:** `data/<param>/test/[x|y]_<idx>.npy` (count determined dynamically; used only for final evaluation)
 - For FARGO3D data, `<param>` includes the solver prefix, e.g. `fargo3d/density`
 - **Input shape:** `(20, 128, 128, 20, 7)` -- 20 samples, 128x128 grid, 20 frames, 7 channels
 - **Output shape:** `(20, 128, 128, 20)` -- 20 predicted frames
@@ -76,8 +79,9 @@ Two numerical solvers have been used:
 
 **Idefix pipeline (`data/idefix/`)** — current:
 
-1. `python generate_params.py [--seed 42] [--nsims 25]` → `params.csv` (sim_id, nu, mu, split)
-   - 2 hardcoded test cases (nu=mu=5e-5 and nu=mu=3e-4), rest random log-uniform in [1e-5, 5e-2]
+1. `python generate_params.py [--seed 42] [--nsims 50] [--nval 6]` → `params.csv` (sim_id, nu, mu, split)
+   - 2 hardcoded test cases (nu=mu=5e-5 and nu=mu=3e-4), 6 val (default), rest train
+   - Current dataset: 50 simulations → 42 train + 6 val + 2 test
 2. `bash build.sh` — builds Idefix binary (requires `$IDEFIX_DIR`, CUDA, MHD enabled)
 3. `python run_simulations.py [--params params.csv] [--gpus 0,1]` — runs sims in parallel across GPUs
    - Each sim produces ~1001 VTK files in `runs/sim_XXX/`, dt=0.05, tstop=50
@@ -86,7 +90,7 @@ Two numerical solvers have been used:
    - Fields: RHO→density, VX1→vx, VX2→vy, BX1→bx, BX2→by
    - 20 sliding windows per sim; input: 5 consecutive frames; output: 20 consecutive frames immediately after input
    - nu and mu appended as channels 5–6
-   - **File count note:** 25 sims → 23 train + 2 test files per field; `train.py` and `inference.py` count files dynamically, so no code changes needed
+   - **File count note:** Current Idefix setup has 50 sims → 42 train + 6 val + 2 test files per field; `train.py` and `inference.py` count files dynamically, so no code changes needed when the number of simulations changes
 
 **FARGO3D** — original dataset:
 - 50 simulations, 1,000 timesteps each, domain [0, 2π]², nu=mu sampled in [1e-5, 5e-2]
@@ -160,6 +164,6 @@ Two numerical solvers have been used:
 
 All paths are relative to the project root:
 
-- **Data:** `data/<param>/[train|test]/`
+- **Data:** `data/<param>/[train|val|test]/`
 - **Checkpoints:** `experiments/<param>/checkpoints/`
 - **Visualizations:** `experiments/<param>/visualizations/`
