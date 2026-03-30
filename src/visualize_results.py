@@ -32,6 +32,11 @@ For full-horizon rollout reference, run prepare_reference.py first.
 For Idefix-derived data, frame titles also show time in Alfvén units. The
 conversion is derived from the fixed Idefix box size, initial density,
 magnetic-field amplitude, and stored timestep defined in data/idefix/.
+
+Each rendered frame also includes a magnetic-dissipation diagnostic panel that
+plots the evolution of epsilon_M over time using companion bx/by data. When
+only one magnetic prediction component is available, the panel falls back to
+the reference curve and prints a notice to the terminal.
 """
 
 import numpy as np
@@ -64,6 +69,7 @@ IDEFIX_INITIAL_B_FIELD = 1.0 / np.sqrt(4.0 * np.pi)
 IDEFIX_ALFVEN_SPEED = IDEFIX_INITIAL_B_FIELD / np.sqrt(IDEFIX_INITIAL_DENSITY)
 IDEFIX_ALFVEN_TIME = IDEFIX_BOX_LENGTH / IDEFIX_ALFVEN_SPEED
 IDEFIX_T_OVER_TA_PER_FRAME = IDEFIX_TIMESTEP / IDEFIX_ALFVEN_TIME
+FARGO_BOX_LENGTH = 2.0 * np.pi
 
 
 def _frame_to_alfven_time(param, frame):
@@ -81,6 +87,230 @@ def _format_alfven_time_label(param, frame):
         return None
 
     return f"t = {t_over_ta:.2f} t_A"
+
+
+def _replace_param_leaf(param, leaf):
+    """Return a sibling parameter path with the final path segment replaced."""
+    param_path = Path(param)
+    parent = param_path.parent
+    if str(parent) == '.':
+        return leaf
+    return str(parent / leaf)
+
+
+def _frames_to_plot_x(param, frames):
+    """Convert absolute frames to plotted x coordinates and an axis label."""
+    times = [_frame_to_alfven_time(param, int(frame)) for frame in frames]
+    if all(time is not None for time in times):
+        return np.asarray(times, dtype=np.float64), r'$t / t_A$'
+    return np.asarray(frames, dtype=np.float64), 'Frame'
+
+
+def _curve_ylim(curves, pad_frac=0.08):
+    """Return a stable linear y-limit for a collection of 1D curves."""
+    valid = [np.asarray(curve) for curve in curves if curve is not None]
+    if not valid:
+        return None
+
+    vals = np.concatenate(valid)
+    if vals.size == 0:
+        return None
+
+    vmax = float(vals.max())
+    vmin = float(vals.min())
+    if np.isclose(vmin, vmax):
+        pad = max(abs(vmax) * pad_frac, 1e-8)
+        return vmin - pad, vmax + pad
+
+    pad = (vmax - vmin) * pad_frac
+    lower = 0.0 if vmin >= 0.0 else vmin - pad
+    upper = vmax + pad
+    return lower, upper
+
+
+def _collapse_windowed_trajectory(windowed):
+    """Collapse overlapping teacher-forced windows to one absolute timeline.
+
+    The chosen policy keeps the shortest-horizon prediction for each absolute
+    frame, which means lower output-step offsets take priority.
+    """
+    selected = {}
+    n_samples = windowed.shape[0]
+    t_out = windowed.shape[3]
+
+    for lead in range(t_out):
+        for sample in range(n_samples):
+            frame = N_INPUT_FRAMES + sample + lead
+            if frame not in selected:
+                selected[frame] = windowed[sample, :, :, lead]
+
+    frames = np.array(sorted(selected), dtype=np.int64)
+    traj = np.stack([selected[frame] for frame in frames], axis=0)
+    return frames, traj
+
+
+def _rollout_prediction_trajectory(pred):
+    """Return absolute frames and trajectory from a rollout prediction array."""
+    frames = np.arange(
+        N_INPUT_FRAMES, N_INPUT_FRAMES + pred.shape[2], dtype=np.int64
+    )
+    return frames, pred.transpose(2, 0, 1)
+
+
+def _rollout_reference_trajectory(ref, dense, n_pred_frames):
+    """Return reference frames/trajectory aligned to the rollout horizon."""
+    if dense:
+        start = N_INPUT_FRAMES
+        stop = min(ref.shape[0], N_INPUT_FRAMES + n_pred_frames)
+        frames = np.arange(start, stop, dtype=np.int64)
+        return frames, ref[start:stop]
+
+    stop = min(ref.shape[2], n_pred_frames)
+    frames = np.arange(N_INPUT_FRAMES, N_INPUT_FRAMES + stop, dtype=np.int64)
+    return frames, ref[:, :, :stop].transpose(2, 0, 1)
+
+
+def _align_trajectories(frames_a, traj_a, frames_b, traj_b):
+    """Intersect two trajectories onto the same absolute-frame timeline."""
+    common = sorted(set(frames_a.tolist()) & set(frames_b.tolist()))
+    if not common:
+        raise ValueError("No overlapping frames available for epsilon_M.")
+
+    index_a = {int(frame): idx for idx, frame in enumerate(frames_a)}
+    index_b = {int(frame): idx for idx, frame in enumerate(frames_b)}
+    common_frames = np.asarray(common, dtype=np.int64)
+    aligned_a = np.stack([traj_a[index_a[int(frame)]] for frame in common_frames])
+    aligned_b = np.stack([traj_b[index_b[int(frame)]] for frame in common_frames])
+    return common_frames, aligned_a, aligned_b
+
+
+def _magnetic_box_length(param):
+    """Return the physical box length for the current dataset family."""
+    if param.startswith("fargo3d/"):
+        return FARGO_BOX_LENGTH
+    return IDEFIX_BOX_LENGTH
+
+
+def compute_magnetic_dissipation(bx_traj, by_traj, mu, param):
+    """Compute epsilon_M(t) from aligned Bx/By trajectories."""
+    bx_traj = np.asarray(bx_traj, dtype=np.float64)
+    by_traj = np.asarray(by_traj, dtype=np.float64)
+    if bx_traj.shape != by_traj.shape:
+        raise ValueError(
+            "Bx and By trajectories must have the same shape for epsilon_M."
+        )
+
+    _, height, width = bx_traj.shape
+    box_length = _magnetic_box_length(param)
+    dx = box_length / width
+    dy = box_length / height
+
+    dby_dx = (np.roll(by_traj, -1, axis=2) - np.roll(by_traj, 1, axis=2))
+    dby_dx /= (2.0 * dx)
+    dbx_dy = (np.roll(bx_traj, -1, axis=1) - np.roll(bx_traj, 1, axis=1))
+    dbx_dy /= (2.0 * dy)
+    current_density = dby_dx - dbx_dy
+
+    cell_area = dx * dy
+    return (mu / box_length) * np.sum(current_density ** 2, axis=(1, 2)) * cell_area
+
+
+def _load_mu(test_dir, sim_id):
+    """Load the magnetic diffusivity mu for a simulation from x_sim data."""
+    x = np.load(test_dir / f"x_sim_{sim_id}.npy", mmap_mode='r')
+    return float(x[0, 0, 0, 0, -1])
+
+
+def _load_optional_prediction_trajectory(pred_path, is_rollout):
+    """Load a magnetic prediction trajectory when the file exists."""
+    if not pred_path.exists():
+        return None
+
+    pred = np.load(pred_path)
+    if is_rollout:
+        return _rollout_prediction_trajectory(pred[0])
+    return _collapse_windowed_trajectory(pred.squeeze(-1))
+
+
+def _build_magnetic_dissipation_data(
+    exp_dir, param, sim_id, test_dir, is_rollout, rollout_n_frames=None
+):
+    """Build precomputed epsilon_M data for one simulation."""
+    mu = _load_mu(test_dir, sim_id)
+    magnetic_params = {
+        field: _replace_param_leaf(param, field) for field in ('bx', 'by')
+    }
+    magnetic_test_dirs = {
+        field: Path(DATA_DIR) / magnetic_params[field] / 'test'
+        for field in magnetic_params
+    }
+
+    if is_rollout and rollout_n_frames is None:
+        raise ValueError("rollout_n_frames is required for rollout epsilon_M.")
+
+    ref_components = {}
+    for field, field_test_dir in magnetic_test_dirs.items():
+        if is_rollout:
+            ref, dense = _load_rollout_reference(field_test_dir, sim_id)
+            ref_components[field] = _rollout_reference_trajectory(
+                ref, dense, rollout_n_frames
+            )
+        else:
+            y = np.load(field_test_dir / f"y_sim_{sim_id}.npy")
+            ref_components[field] = _collapse_windowed_trajectory(y)
+
+    ref_frames, ref_bx, ref_by = _align_trajectories(
+        ref_components['bx'][0],
+        ref_components['bx'][1],
+        ref_components['by'][0],
+        ref_components['by'][1],
+    )
+    ref_curve = compute_magnetic_dissipation(ref_bx, ref_by, mu, param)
+    ref_x, xlabel = _frames_to_plot_x(param, ref_frames)
+
+    pred_suffix = '_rollout' if is_rollout else ''
+    pred_components = {}
+    missing_pred = []
+    for field, magnetic_param in magnetic_params.items():
+        pred_path = (
+            Path(exp_dir) / magnetic_param / 'visualizations' /
+            f"pred_sim_{sim_id}{pred_suffix}.npy"
+        )
+        pred_traj = _load_optional_prediction_trajectory(pred_path, is_rollout)
+        if pred_traj is None:
+            missing_pred.append(field)
+        else:
+            pred_components[field] = pred_traj
+
+    pred_frames = None
+    pred_x = None
+    pred_curve = None
+    if missing_pred:
+        missing = ', '.join(sorted(missing_pred))
+        print(
+            f"  sim {sim_id}: magnetic prediction curve unavailable; "
+            f"missing {missing}. Showing reference epsilon_M only."
+        )
+    else:
+        pred_frames, pred_bx, pred_by = _align_trajectories(
+            pred_components['bx'][0],
+            pred_components['bx'][1],
+            pred_components['by'][0],
+            pred_components['by'][1],
+        )
+        pred_curve = compute_magnetic_dissipation(pred_bx, pred_by, mu, param)
+        pred_x, _ = _frames_to_plot_x(param, pred_frames)
+
+    return {
+        'xlabel': xlabel,
+        'ref_frames': ref_frames,
+        'ref_x': ref_x,
+        'ref_curve': ref_curve,
+        'pred_frames': pred_frames,
+        'pred_x': pred_x,
+        'pred_curve': pred_curve,
+        'ylim': _curve_ylim([ref_curve, pred_curve]),
+    }
 
 
 def compute_power_spectrum(field):
@@ -137,7 +367,7 @@ def _spectrum_ylim(P_arrays, pad=0.5):
 
 
 def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True,
-                 ylim=None):
+                  ylim=None):
     """Draw 1D power spectra on a log-log axis.
 
     Parameters
@@ -162,6 +392,73 @@ def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True,
         ax.set_ylim(ylim)
 
 
+def _plot_magnetic_dissipation(ax, frame, dissipation):
+    """Draw the epsilon_M panel and highlight the current frame."""
+    if dissipation is None:
+        ax.set_visible(False)
+        return
+
+    ax.plot(
+        dissipation['ref_x'],
+        dissipation['ref_curve'],
+        color='steelblue',
+        linewidth=2,
+        label='Reference',
+    )
+    if dissipation['pred_curve'] is not None:
+        ax.plot(
+            dissipation['pred_x'],
+            dissipation['pred_curve'],
+            color='darkorange',
+            linestyle='--',
+            linewidth=2,
+            label='Prediction',
+        )
+
+    marker_sources = [
+        (
+            dissipation['pred_frames'],
+            dissipation['pred_x'],
+            dissipation['pred_curve'],
+        ),
+        (
+            dissipation['ref_frames'],
+            dissipation['ref_x'],
+            dissipation['ref_curve'],
+        ),
+    ]
+    for marker_frames, marker_x, marker_curve in marker_sources:
+        if marker_curve is None:
+            continue
+
+        matches = np.where(marker_frames == frame)[0]
+        if not matches.size:
+            continue
+
+        idx = int(matches[0])
+        ax.plot(
+            marker_x[idx],
+            marker_curve[idx],
+            marker='o',
+            markersize=12,
+            color='red',
+            markeredgecolor='white',
+            markeredgewidth=1.5,
+            linestyle='None',
+            label='Current frame',
+            zorder=5,
+        )
+        break
+
+    ax.set_title(r'Magnetic dissipation $\epsilon_M$')
+    ax.set_xlabel(dissipation['xlabel'])
+    ax.set_ylabel(r'$\epsilon_M$')
+    ax.grid(True, alpha=0.3)
+    if dissipation['ylim'] is not None:
+        ax.set_ylim(dissipation['ylim'])
+    ax.legend(fontsize=9)
+
+
 def parse_pred_file(path):
     """Return (sim_id, is_rollout) from a pred_sim_*.npy filename.
 
@@ -178,7 +475,7 @@ def parse_pred_file(path):
 
 def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
                         target, pred_t, vmin, vmax, eabs, suffix='',
-                        spec_ylim=None):
+                        spec_ylim=None, dissipation=None):
     """Render a two-row PNG.
 
     Row 0: reference | prediction | error  (field panels)
@@ -203,6 +500,7 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
     ax1 = fig.add_subplot(gs[0, 1])
     ax2 = fig.add_subplot(gs[0, 2])
     ax_spec = fig.add_subplot(gs[1, :2])
+    ax_eps = fig.add_subplot(gs[1, 2])
 
     im0 = ax0.pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
     ax0.set_title('Reference')
@@ -221,13 +519,15 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
 
     _plot_spectra(ax_spec, k_bins, P_target, P_pred, with_target=True,
                   ylim=spec_ylim)
+    _plot_magnetic_dissipation(ax_eps, frame, dissipation)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
 
 
 def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
-                          pred_t, vmin, vmax, suffix='', spec_ylim=None):
+                          pred_t, vmin, vmax, suffix='', spec_ylim=None,
+                          dissipation=None):
     """Render a two-row PNG for prediction-only rollout frames.
 
     Row 0: blank | prediction | blank  (same column widths as _save_frame_with_gt)
@@ -250,6 +550,7 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
     ax1 = fig.add_subplot(gs[0, 1])
     ax2 = fig.add_subplot(gs[0, 2])
     ax_spec = fig.add_subplot(gs[1, :2])
+    ax_eps = fig.add_subplot(gs[1, 2])
 
     im1 = ax1.pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
     ax1.set_title('Prediction')
@@ -262,6 +563,7 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
 
     _plot_spectra(ax_spec, k_bins, None, P_pred, with_target=False,
                   ylim=spec_ylim)
+    _plot_magnetic_dissipation(ax_eps, frame, dissipation)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
@@ -277,6 +579,7 @@ def _render_frame_job(job):
     """
     vis_dir = Path(job['vis_dir'])
     spec_ylim = job.get('spec_ylim')
+    dissipation = job.get('dissipation')
     if job['target'] is not None:
         _save_frame_with_gt(
             vis_dir, job['fname'], job['param'], job['sim_id'],
@@ -284,6 +587,7 @@ def _render_frame_job(job):
             job['vmin'], job['vmax'], job['eabs'],
             suffix=job.get('suffix', ''),
             spec_ylim=spec_ylim,
+            dissipation=dissipation,
         )
     else:
         _save_frame_pred_only(
@@ -292,6 +596,7 @@ def _render_frame_job(job):
             job['vmin'], job['vmax'],
             suffix=job.get('suffix', ''),
             spec_ylim=spec_ylim,
+            dissipation=dissipation,
         )
     return job['fname']
 
@@ -345,7 +650,7 @@ def _load_rollout_reference(test_dir, sim_id):
     return y[0], False             # (H, W, T_out)
 
 
-def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
+def visualize_teacher_forced(pred_path, sim_id, exp_dir, test_dir, vis_dir,
                              param, force, max_frames=None,
                              workers=None):
     """Visualize a teacher-forced prediction file.
@@ -369,6 +674,9 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
             _, P_p = compute_power_spectrum(pred[s, :, :, t])
             all_spectra.extend([P_y, P_p])
     spec_ylim_global = _spectrum_ylim(all_spectra)
+    dissipation = _build_magnetic_dissipation_data(
+        exp_dir, param, sim_id, test_dir, is_rollout=False,
+    )
 
     jobs = []
     skipped = 0
@@ -398,6 +706,7 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
                 'eabs': eabs_global,
                 'suffix': '',
                 'spec_ylim': spec_ylim_global,
+                'dissipation': dissipation,
             })
 
     total = _run_jobs(
@@ -406,8 +715,8 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
     return total, skipped
 
 
-def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
-                      max_frames=None, workers=None):
+def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
+                      force, max_frames=None, workers=None):
     """Visualize an autoregressive rollout prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
@@ -424,6 +733,10 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
     pred = np.load(pred_path)          # (1, 128, 128, 20*N)
     pred = pred[0]                     # (128, 128, 20*N)
     n_frames = pred.shape[2]
+    dissipation = _build_magnetic_dissipation_data(
+        exp_dir, param, sim_id, test_dir, is_rollout=True,
+        rollout_n_frames=n_frames,
+    )
 
     ref, dense = _load_rollout_reference(test_dir, sim_id)
     # dense=True:  ref shape (N_sim_frames, H, W)
@@ -518,6 +831,7 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
                 'eabs': eabs_global,
                 'suffix': 'rollout',
                 'spec_ylim': spec_ylim_global,
+                'dissipation': dissipation,
             })
         else:
             jobs.append({
@@ -533,6 +847,7 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
                 'eabs': 0.0,
                 'suffix': 'rollout',
                 'spec_ylim': spec_ylim_global,
+                'dissipation': dissipation,
             })
 
     total = _run_jobs(
@@ -592,8 +907,8 @@ def main():
     )
     opt = parser.parse_args()
 
-    exp_dir = opt.experiments_dir
-    vis_dir = Path(exp_dir) / opt.param / 'visualizations'
+    exp_dir = Path(opt.experiments_dir)
+    vis_dir = exp_dir / opt.param / 'visualizations'
     test_dir = Path(DATA_DIR) / opt.param / 'test'
 
     all_pred_files = sorted(vis_dir.glob("pred_sim_*.npy"))
@@ -630,7 +945,8 @@ def main():
     for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced",
                                   unit="file"):
         n, s = visualize_teacher_forced(
-            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
+            pred_path, sim_id, exp_dir, test_dir, vis_dir, opt.param,
+            opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
         )
         total_pngs += n
@@ -639,7 +955,8 @@ def main():
     # --- rollout ---
     for pred_path, sim_id in tqdm(rollout_files, desc="Rollout", unit="file"):
         n, s = visualize_rollout(
-            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
+            pred_path, sim_id, exp_dir, test_dir, vis_dir, opt.param,
+            opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
         )
         total_pngs += n
