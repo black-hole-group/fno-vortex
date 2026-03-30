@@ -23,7 +23,7 @@ Autoregressive rollout (pred_sim_<id>_rollout.npy):
 
 Usage:
     python visualize_results.py --param <parameter_name> \\
-        [--experiments-dir <path>] [--force]
+        [--experiments-dir <path>] [--force] [--max-frames N]
 
 Run inference.py first to produce pred_sim_*.npy files.
 For full-horizon rollout reference, run prepare_reference.py first.
@@ -250,7 +250,7 @@ def _load_rollout_reference(test_dir, sim_id):
 
 
 def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
-                             param, force):
+                             param, force, max_frames=None):
     """Visualize a teacher-forced prediction file.
 
     pred shape: (n_samples, 128, 128, T_out)
@@ -269,7 +269,11 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
 
     for s in tqdm(range(n_samples), desc=f"  sim {sim_id}", unit="s",
                   leave=False):
+        if max_frames is not None and total + skipped >= max_frames:
+            break
         for t in range(pred.shape[3]):
+            if max_frames is not None and total + skipped >= max_frames:
+                break
             frame = N_INPUT_FRAMES + s + t
             fname = f'frame_{frame:04d}_sim_{sim_id}.png'
             if (vis_dir / fname).exists() and not force:
@@ -285,7 +289,8 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
     return total, skipped
 
 
-def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force):
+def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
+                      max_frames=None):
     """Visualize an autoregressive rollout prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
@@ -342,8 +347,9 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force):
 
     total = 0
     skipped = 0
+    frame_limit = n_frames if max_frames is None else min(n_frames, max_frames)
 
-    for i in tqdm(range(n_frames), desc=f"  sim {sim_id} rollout", unit="frame",
+    for i in tqdm(range(frame_limit), desc=f"  sim {sim_id} rollout", unit="frame",
                   leave=False):
         frame = N_INPUT_FRAMES + i
         fname = f'frame_{frame:04d}_sim_{sim_id}_rollout.png'
@@ -418,6 +424,9 @@ def main():
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
     parser.add_argument("--force", action="store_true",
                         help="Regenerate PNGs/movies even if they already exist")
+    parser.add_argument("--max-frames", type=int, default=None, metavar="N",
+                        help="Render only the first N frames per simulation "
+                             "(default: render all frames)")
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
@@ -453,7 +462,8 @@ def main():
     # --- teacher-forced ---
     for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced", unit="file"):
         n, s = visualize_teacher_forced(
-            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force
+            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
+            max_frames=opt.max_frames,
         )
         total_pngs += n
         skipped_pngs += s
@@ -461,7 +471,8 @@ def main():
     # --- rollout ---
     for pred_path, sim_id in tqdm(rollout_files, desc="Rollout", unit="file"):
         n, s = visualize_rollout(
-            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force
+            pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
+            max_frames=opt.max_frames,
         )
         total_pngs += n
         skipped_pngs += s
