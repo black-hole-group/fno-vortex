@@ -24,6 +24,7 @@ Autoregressive rollout (pred_sim_<id>_rollout.npy):
 Usage:
     python visualize_results.py --param <parameter_name> \\
         [--experiments-dir <path>] [--force] [--max-frames N]
+        [--workers N]
 
 Run inference.py first to produce pred_sim_*.npy files.
 For full-horizon rollout reference, run prepare_reference.py first.
@@ -35,10 +36,12 @@ magnetic-field amplitude, and stored timestep defined in data/idefix/.
 
 import numpy as np
 import argparse
+import multiprocessing
 import subprocess
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 from pathlib import Path
 import os
@@ -230,6 +233,62 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
     plt.close(fig)
 
 
+def _render_frame_job(job):
+    """Top-level picklable worker for parallel PNG rendering.
+
+    ``job`` is a plain dict produced by the main process. Calls
+    ``_save_frame_with_gt`` when a reference field is present, or
+    ``_save_frame_pred_only`` for prediction-only frames.
+    Returns the output filename (used to count completions).
+    """
+    vis_dir = Path(job['vis_dir'])
+    if job['target'] is not None:
+        _save_frame_with_gt(
+            vis_dir, job['fname'], job['param'], job['sim_id'],
+            job['frame'], job['target'], job['pred_t'],
+            job['vmin'], job['vmax'], job['eabs'],
+            suffix=job.get('suffix', ''),
+        )
+    else:
+        _save_frame_pred_only(
+            vis_dir, job['fname'], job['param'], job['sim_id'],
+            job['frame'], job['pred_t'],
+            job['vmin'], job['vmax'],
+            suffix=job.get('suffix', ''),
+        )
+    return job['fname']
+
+
+def _run_jobs(jobs, desc, workers=None):
+    """Render a list of frame jobs serially or with a process pool.
+
+    Parameters
+    ----------
+    jobs    : list of dicts as produced by the visualize_* helpers
+    desc    : tqdm progress-bar label
+    workers : int or None — None / 1 → serial; >1 → process pool
+
+    Returns the number of jobs executed.
+    """
+    if not jobs:
+        return 0
+    if workers and workers > 1:
+        ctx = multiprocessing.get_context('spawn')
+        with ProcessPoolExecutor(
+            max_workers=workers, mp_context=ctx
+        ) as pool:
+            futures = [pool.submit(_render_frame_job, j) for j in jobs]
+            for _ in tqdm(
+                as_completed(futures), total=len(futures),
+                desc=desc, unit='frame', leave=False,
+            ):
+                pass
+    else:
+        for job in tqdm(jobs, desc=desc, unit='frame', leave=False):
+            _render_frame_job(job)
+    return len(jobs)
+
+
 def _load_rollout_reference(test_dir, sim_id):
     """Load the reference trajectory for rollout visualization.
 
@@ -250,7 +309,8 @@ def _load_rollout_reference(test_dir, sim_id):
 
 
 def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
-                             param, force, max_frames=None):
+                             param, force, max_frames=None,
+                             workers=None):
     """Visualize a teacher-forced prediction file.
 
     pred shape: (n_samples, 128, 128, T_out)
@@ -259,38 +319,47 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
     pred = np.load(pred_path).squeeze(-1)
     y    = np.load(test_dir / f"y_sim_{sim_id}.npy")
 
-    vmin_global = min(pred.min(), y.min())
-    vmax_global = max(pred.max(), y.max())
+    vmin_global = float(min(pred.min(), y.min()))
+    vmax_global = float(max(pred.max(), y.max()))
     eabs_global = float(np.max(np.abs(y - pred)))
 
-    total = 0
+    jobs = []
     skipped = 0
     n_samples = pred.shape[0]
 
-    for s in tqdm(range(n_samples), desc=f"  sim {sim_id}", unit="s",
-                  leave=False):
-        if max_frames is not None and total + skipped >= max_frames:
+    for s in range(n_samples):
+        if max_frames is not None and len(jobs) + skipped >= max_frames:
             break
         for t in range(pred.shape[3]):
-            if max_frames is not None and total + skipped >= max_frames:
+            if max_frames is not None and len(jobs) + skipped >= max_frames:
                 break
             frame = N_INPUT_FRAMES + s + t
             fname = f'frame_{frame:04d}_sim_{sim_id}.png'
             if (vis_dir / fname).exists() and not force:
                 skipped += 1
                 continue
-            _save_frame_with_gt(
-                vis_dir, fname, param, sim_id, frame,
-                y[s, :, :, t], pred[s, :, :, t],
-                vmin_global, vmax_global, eabs_global,
-            )
-            total += 1
+            jobs.append({
+                'vis_dir': str(vis_dir),
+                'fname': fname,
+                'param': param,
+                'sim_id': sim_id,
+                'frame': frame,
+                'target': y[s, :, :, t].copy(),
+                'pred_t': pred[s, :, :, t].copy(),
+                'vmin': vmin_global,
+                'vmax': vmax_global,
+                'eabs': eabs_global,
+                'suffix': '',
+            })
 
+    total = _run_jobs(
+        jobs, desc=f"  sim {sim_id}", workers=workers,
+    )
     return total, skipped
 
 
 def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
-                      max_frames=None):
+                      max_frames=None, workers=None):
     """Visualize an autoregressive rollout prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
@@ -314,16 +383,16 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
 
     if dense:
         n_ref = ref.shape[0]
-        ref_available = n_ref  # ref[abs_frame] valid for abs_frame < n_ref
         # Build arrays for color scale computation over available overlap
         max_abs = min(N_INPUT_FRAMES + n_frames, n_ref)
         pred_for_scale = pred[:, :, :max_abs - N_INPUT_FRAMES]
         ref_for_scale  = ref[N_INPUT_FRAMES:max_abs]
         vmin_global = min(float(pred.min()), float(ref_for_scale.min()))
         vmax_global = max(float(pred.max()), float(ref_for_scale.max()))
-        # Transpose ref_for_scale to (H,W,T) for error calc
         eabs_global = float(
-            np.max(np.abs(ref_for_scale - pred_for_scale.transpose(2, 0, 1)))
+            np.max(np.abs(
+                ref_for_scale - pred_for_scale.transpose(2, 0, 1)
+            ))
         )
         if n_ref < N_INPUT_FRAMES + n_frames:
             print(
@@ -338,19 +407,23 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
         overlap = min(n_frames, t_out)
         vmin_global = min(float(pred.min()), float(ref.min()))
         vmax_global = max(float(pred.max()), float(ref.max()))
-        eabs_global = float(np.max(np.abs(ref[:, :, :overlap] - pred[:, :, :overlap])))
+        eabs_global = float(
+            np.max(np.abs(ref[:, :, :overlap] - pred[:, :, :overlap]))
+        )
         print(
             f"  sim {sim_id}: no ref_sim_{sim_id}.npy found; "
             f"using sparse y_sim reference (frames 0..{t_out - 1} only). "
             "Run prepare_reference.py for full-horizon reference."
         )
 
-    total = 0
-    skipped = 0
-    frame_limit = n_frames if max_frames is None else min(n_frames, max_frames)
+    frame_limit = (
+        n_frames if max_frames is None else min(n_frames, max_frames)
+    )
 
-    for i in tqdm(range(frame_limit), desc=f"  sim {sim_id} rollout", unit="frame",
-                  leave=False):
+    jobs = []
+    skipped = 0
+
+    for i in range(frame_limit):
         frame = N_INPUT_FRAMES + i
         fname = f'frame_{frame:04d}_sim_{sim_id}_rollout.png'
 
@@ -358,7 +431,7 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
             skipped += 1
             continue
 
-        pred_t = pred[:, :, i]
+        pred_t = pred[:, :, i].copy()
 
         # Determine if reference exists for this frame
         if dense:
@@ -367,21 +440,38 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
             has_ref = i < ref.shape[2]
 
         if has_ref:
-            ref_t = ref[frame] if dense else ref[:, :, i]
-            _save_frame_with_gt(
-                vis_dir, fname, param, sim_id, frame,
-                ref_t, pred_t,
-                vmin_global, vmax_global, eabs_global,
-                suffix='rollout',
-            )
+            ref_t = (ref[frame] if dense else ref[:, :, i]).copy()
+            jobs.append({
+                'vis_dir': str(vis_dir),
+                'fname': fname,
+                'param': param,
+                'sim_id': sim_id,
+                'frame': frame,
+                'target': ref_t,
+                'pred_t': pred_t,
+                'vmin': vmin_global,
+                'vmax': vmax_global,
+                'eabs': eabs_global,
+                'suffix': 'rollout',
+            })
         else:
-            _save_frame_pred_only(
-                vis_dir, fname, param, sim_id, frame,
-                pred_t, vmin_global, vmax_global,
-                suffix='rollout',
-            )
-        total += 1
+            jobs.append({
+                'vis_dir': str(vis_dir),
+                'fname': fname,
+                'param': param,
+                'sim_id': sim_id,
+                'frame': frame,
+                'target': None,
+                'pred_t': pred_t,
+                'vmin': vmin_global,
+                'vmax': vmax_global,
+                'eabs': 0.0,
+                'suffix': 'rollout',
+            })
 
+    total = _run_jobs(
+        jobs, desc=f"  sim {sim_id} rollout", workers=workers,
+    )
     return total, skipped
 
 
@@ -421,12 +511,19 @@ def render_movie(vis_dir, png_glob, movie_name, force):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--param", type=str, default='density')
-    parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
+    parser.add_argument("--experiments-dir", type=str,
+                        default=EXPERIMENTS_DIR)
     parser.add_argument("--force", action="store_true",
-                        help="Regenerate PNGs/movies even if they already exist")
+                        help="Regenerate PNGs/movies even if they exist")
     parser.add_argument("--max-frames", type=int, default=None, metavar="N",
                         help="Render only the first N frames per simulation "
                              "(default: render all frames)")
+    parser.add_argument(
+        "--workers", type=int, default=None, metavar="N",
+        help="Number of worker processes for parallel PNG rendering. "
+             "Defaults to serial (1 process). Use e.g. --workers 8 to "
+             "saturate CPU cores when rendering hundreds of frames.",
+    )
     opt = parser.parse_args()
 
     exp_dir = opt.experiments_dir
@@ -455,15 +552,20 @@ def main():
     print(f"Ground truth directory: {test_dir}")
     print(f"Found {len(tf_files)} teacher-forced file(s), "
           f"{len(rollout_files)} rollout file(s)")
+    if opt.workers and opt.workers > 1:
+        print(f"Parallel rendering: {opt.workers} worker processes")
+    else:
+        print("Rendering: serial (use --workers N for parallelism)")
 
     total_pngs = 0
     skipped_pngs = 0
 
     # --- teacher-forced ---
-    for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced", unit="file"):
+    for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced",
+                                  unit="file"):
         n, s = visualize_teacher_forced(
             pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
-            max_frames=opt.max_frames,
+            max_frames=opt.max_frames, workers=opt.workers,
         )
         total_pngs += n
         skipped_pngs += s
@@ -472,7 +574,7 @@ def main():
     for pred_path, sim_id in tqdm(rollout_files, desc="Rollout", unit="file"):
         n, s = visualize_rollout(
             pred_path, sim_id, test_dir, vis_dir, opt.param, opt.force,
-            max_frames=opt.max_frames,
+            max_frames=opt.max_frames, workers=opt.workers,
         )
         total_pngs += n
         skipped_pngs += s
