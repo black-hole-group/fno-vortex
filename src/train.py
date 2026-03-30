@@ -214,7 +214,8 @@ def main():
     training_state_path = os.path.join(checkpoint_dir, 'training_state.pt')
     loss_path = os.path.join(checkpoint_dir, 'loss_64_30.npy')
 
-    myloss = LpLoss(size_average=False)
+    # Average relative L2 over the batch so it is on a comparable scale to MAE.
+    myloss = LpLoss(size_average=True)
     loss_function = []
     log10_mae_history = []
     log10_val_mae_history = []
