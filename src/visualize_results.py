@@ -250,14 +250,23 @@ def _build_magnetic_dissipation_data(
 
     ref_components = {}
     for field, field_test_dir in magnetic_test_dirs.items():
+        ref, dense = _load_rollout_reference(field_test_dir, sim_id)
         if is_rollout:
-            ref, dense = _load_rollout_reference(field_test_dir, sim_id)
             ref_components[field] = _rollout_reference_trajectory(
                 ref, dense, rollout_n_frames
             )
         else:
-            y = np.load(field_test_dir / f"y_sim_{sim_id}.npy")
-            ref_components[field] = _collapse_windowed_trajectory(y)
+            if dense:
+                # Dense ref_sim covers the full simulation timeline — use it
+                # so epsilon_M spans all available frames, not just y windows.
+                n_ref = ref.shape[0]
+                frames = np.arange(n_ref, dtype=np.int64)
+                traj = ref          # (N_frames, H, W)
+                ref_components[field] = (frames, traj)
+            else:
+                # Fall back to supervised windows when no dense file exists.
+                y = np.load(field_test_dir / f"y_sim_{sim_id}.npy")
+                ref_components[field] = _collapse_windowed_trajectory(y)
 
     ref_frames, ref_bx, ref_by = _align_trajectories(
         ref_components['bx'][0],
