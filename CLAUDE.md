@@ -24,9 +24,10 @@ python train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 - `--param` selects which physical field to train on (e.g. `density`, `vy`, `by`; defaults to `density`)
 - Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling (step=500, γ=0.5)
 - Saves model checkpoint to `experiments/<param>/checkpoints/model_64_30.pt`
-- Saves loss history to `experiments/<param>/checkpoints/loss_64_30.npy`
+- Saves loss history to `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train/val MAE, normalized Relative L2, optimized loss, and denormalized Relative L2 diagnostic)
 - Saves one validation prediction image per epoch to `experiments/<param>/visualizations/`
 - `--fast` runs a short smoke test on a tiny subset of the data for quick training/display checks
+- Checkpoints created before the normalized-loss refactor are intentionally incompatible with `--resume`
 
 **Running inference:**
 ```bash
@@ -98,8 +99,9 @@ python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
 
 Training combines two losses:
 1. **MAE** (`F.l1_loss`) on normalized predictions
-2. **Relative L2** (`LpLoss`) on denormalized predictions: `‖pred − target‖₂ / ‖target‖₂`
-- Combined as: `loss = mae + l2`
+2. **Relative L2** (`LpLoss`) on normalized predictions: `‖pred − target‖₂ / ‖target‖₂`
+- Optimized as: `opt_loss = mae + rel_l2`
+- Denormalized relative L2 is reported as a diagnostic metric only
 
 **`src/utilities.py` provides:**
 - `LpLoss`: Relative/absolute Lp norm loss (used in training)

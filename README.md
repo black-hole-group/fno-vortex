@@ -95,13 +95,15 @@ Use `--fast` for a short smoke test that trains on a tiny subset of the data and
 - Batch size: 16 (per gradient step)
 - Optimizer: Custom Adam with `weight_decay=1e-4`
 - Learning rate: 0.001 with StepLR scheduler (`step_size=500`, `gamma=0.5`)
-- Early stopping: `--patience 500` (default; monitors validation loss, 0 = disabled)
-- Loss: Combined MAE (L1) + Relative L2 loss
+- Early stopping: `--patience 500` (default; monitors optimized validation loss, 0 = disabled)
+- Loss: Optimized on normalized MAE (L1) + normalized Relative L2; also reports denormalized Relative L2 as a diagnostic metric
 
 **Output** (paths are relative to project root):
 - Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
-- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
+- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train/val MAE, normalized Relative L2, optimized loss, and denormalized Relative L2 diagnostic)
 - Validation images: `experiments/<param>/visualizations/` (one per epoch)
+
+Checkpoints created before the normalized-loss refactor are not compatible with `--resume`; start a fresh run instead of resuming an older `training_state.pt`.
 
 ### Inference
 
@@ -131,17 +133,18 @@ At inference time the model receives ground-truth simulation frames as input for
 
 ### Loss Functions
 
-The model uses a composite loss (defined in `src/utilities.py`):
+The model optimizes a composite loss (defined in `src/utilities.py`):
 
 1. **MAE Loss (L1)**: Mean absolute error on normalized predictions
-2. **Relative L2 Loss (LpLoss)**: `‖prediction − target‖₂ / ‖target‖₂`
-3. **Combined**: `loss = mae + l2`
+2. **Relative L2 Loss (LpLoss)**: `‖prediction − target‖₂ / ‖target‖₂` computed on the same normalized tensors
+3. **Optimized loss**: `opt_loss = mae + rel_l2`
+4. **Diagnostic metric**: denormalized relative L2 is reported for monitoring, but is not used for backpropagation or early stopping
 
 ### Normalization
 
 - **Input snapshots** (first 5 of 7 channels): min-max scaled to [-1, 1] per batch
 - **Physical parameters** ν and μ (last 2 channels): passed through as-is, not normalized
-- **Target (y)**: min-max scaled to [-1, 1] during training; denormalized for loss computation and saved predictions
+- **Target (y)**: min-max scaled to [-1, 1] during training; denormalized for saved predictions and diagnostic metrics
 
 ### Data Loading
 
@@ -216,4 +219,3 @@ fno/
 
 - Duarte, Nemmen & Lima-Santos (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 - Li et al. (2020). Fourier Neural Operator for Parametric Partial Differential Equations. [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
-

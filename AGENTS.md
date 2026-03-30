@@ -26,14 +26,15 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 - **Epochs:** 5,000
 - **Learning rate:** 0.001 with StepLR scheduler (step=500, gamma=0.5)
 - **Batch size:** 16
-- **Loss:** MAE + Relative L2 (`LpLoss`)
+- **Loss:** optimized on normalized MAE + normalized Relative L2 (`LpLoss`); denormalized Relative L2 is reporting-only
 - **Validation:** uses `data/<param>/val/` for model selection and early stopping; `test/` is never read during training
 - `--fast` runs a tiny smoke test with fewer files, fewer samples, and more frequent visualizations
 - **Outputs:**
   - Latest model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
   - Best model checkpoint: `experiments/<param>/checkpoints/model_best.pt`
-  - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy`
+  - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train/val MAE, normalized Relative L2, optimized loss, and denormalized Relative L2 diagnostic)
   - Validation images: `experiments/<param>/visualizations/`
+- Checkpoints created before the normalized-loss refactor are intentionally incompatible with `--resume`
 
 ### Inference
 
