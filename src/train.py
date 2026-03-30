@@ -15,8 +15,6 @@ from datetime import datetime
 import asciichartpy
 
 from architecture import FNO3d
-from utilities import LpLoss
-
 torch.manual_seed(0)
 np.random.seed(0)
 
@@ -24,16 +22,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR   = os.path.dirname(SCRIPT_DIR)
 DATA_DIR        = os.path.join(ROOT_DIR, 'data')
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
-LOSS_DEFINITION_VERSION = 'normalized-mae-plus-normalized-relative-l2-v1'
+LOSS_DEFINITION_VERSION = 'normalized-mae-only-v1'
 LOSS_HISTORY_COLUMNS = (
     'train_mae',
-    'train_rel_l2',
-    'train_opt_loss',
-    'train_rel_l2_denorm',
     'val_mae',
-    'val_rel_l2',
-    'val_opt_loss',
-    'val_rel_l2_denorm',
 )
 
 
@@ -225,11 +217,10 @@ def main():
     training_state_path = os.path.join(checkpoint_dir, 'training_state.pt')
     loss_path = os.path.join(checkpoint_dir, 'loss_64_30.npy')
 
-    relative_l2_loss = LpLoss(size_average=True)
     loss_history = {name: [] for name in LOSS_HISTORY_COLUMNS}
     log10_mae_history = []
     log10_val_mae_history = []
-    best_val_opt_loss = float('inf')
+    best_val_mae = float('inf')
     best_epoch = 0
     epochs_no_improve = 0
     best_model_path = os.path.join(checkpoint_dir, 'model_best.pt')
@@ -256,7 +247,7 @@ def main():
             'loss_history': loss_history,
             'log10_mae_history': log10_mae_history,
             'log10_val_mae_history': log10_val_mae_history,
-            'best_val_opt_loss': best_val_opt_loss,
+            'best_val_mae': best_val_mae,
             'best_epoch': best_epoch,
             'epochs_no_improve': epochs_no_improve,
         }
@@ -281,9 +272,9 @@ def main():
         loss_history = checkpoint.get('loss_history', loss_history)
         log10_mae_history = checkpoint.get('log10_mae_history', log10_mae_history)
         log10_val_mae_history = checkpoint.get('log10_val_mae_history', log10_val_mae_history)
-        best_val_opt_loss = checkpoint.get(
-            'best_val_opt_loss',
-            best_val_opt_loss,
+        best_val_mae = checkpoint.get(
+            'best_val_mae',
+            best_val_mae,
         )
         best_epoch = checkpoint.get('best_epoch', best_epoch)
         epochs_no_improve = checkpoint.get('epochs_no_improve', epochs_no_improve)
@@ -320,12 +311,10 @@ def main():
             )
         log.write(f"{'='*70}\n")
         log.write(
-            f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>10}  "
-            f"{'rel_l2':>10}  {'opt_loss':>10}  {'rel_l2_dn':>11}  "
-            f"{'val_mae':>10}  {'val_rel_l2':>11}  {'val_opt':>10}  "
-            f"{'val_rel_dn':>11}  {'log10_mae':>10}  {'eta':>12}\n"
+            f"{'epoch':>6}  {'time_s':>7}  {'lr':>10}  {'mae':>12}  "
+            f"{'val_mae':>12}  {'log10_mae':>10}  {'eta':>12}\n"
         )
-        log.write(f"{'-'*160}\n")
+        log.write(f"{'-'*90}\n")
 
     t1_final = default_timer()
     vis_idx = 0
@@ -335,9 +324,6 @@ def main():
             model.train()
             t1 = default_timer()
             train_mae = 0
-            train_rel_l2 = 0
-            train_opt_loss = 0
-            train_rel_l2_denorm = 0
             train_steps = 0
 
             for bs in range(n_train):
@@ -362,27 +348,10 @@ def main():
                         out = model(x).view(actual_bs, 128, 128, 20)
 
                         mae = F.l1_loss(out, y, reduction='mean')
-                        rel_l2 = relative_l2_loss(
-                            out.view(actual_bs, -1),
-                            y.view(actual_bs, -1),
-                        )
-
-                        # Denormalize using file-level min/max (consistent with normalization)
-                        y_denorm   = y_min + ((y   + 1) * (y_max - y_min) / 2)
-                        out_denorm = y_min + ((out + 1) * (y_max - y_min) / 2)
-                        rel_l2_denorm = relative_l2_loss(
-                            out_denorm.view(actual_bs, -1),
-                            y_denorm.view(actual_bs, -1),
-                        )
-
-                        opt_loss = mae + rel_l2
-                    scaler.scale(opt_loss).backward()
+                    scaler.scale(mae).backward()
                     scaler.step(optimizer)
                     scaler.update()
                     train_mae += mae.item()
-                    train_rel_l2 += rel_l2.item()
-                    train_opt_loss += opt_loss.item()
-                    train_rel_l2_denorm += rel_l2_denorm.item()
                     train_steps += 1
 
             scheduler.step()
@@ -391,12 +360,9 @@ def main():
             # --- Validation pass (uses val split, never test) ---
             val_steps = 0
             val_mae_sum = 0.0
-            val_rel_l2_sum = 0.0
-            val_opt_loss_sum = 0.0
-            val_rel_l2_denorm_sum = 0.0
             with torch.no_grad():
                 for j in range(n_val):
-                    x_t, y_t, y_min_t, y_max_t = val_cache[j]
+                    x_t, y_t, _, _ = val_cache[j]
                     for l in range(0, len(x_t), batch_size):
                         xb = x_t[l:l+batch_size].cuda()
                         yb = y_t[l:l+batch_size].cuda()
@@ -410,31 +376,14 @@ def main():
                         with val_autocast:
                             ob = model(xb).view(ab, 128, 128, 20)
                             val_mae_b = F.l1_loss(ob, yb, reduction='mean')
-                            val_rel_l2_b = relative_l2_loss(
-                                ob.view(ab, -1),
-                                yb.view(ab, -1),
-                            )
-                            y_dn = y_min_t + ((yb + 1) * (y_max_t - y_min_t) / 2)
-                            o_dn = y_min_t + ((ob + 1) * (y_max_t - y_min_t) / 2)
-                            val_rel_l2_denorm_b = relative_l2_loss(
-                                o_dn.view(ab, -1),
-                                y_dn.view(ab, -1),
-                            )
-                            val_opt_loss_b = val_mae_b + val_rel_l2_b
                         val_mae_sum += val_mae_b.item()
-                        val_rel_l2_sum += val_rel_l2_b.item()
-                        val_opt_loss_sum += val_opt_loss_b.item()
-                        val_rel_l2_denorm_sum += val_rel_l2_denorm_b.item()
                         val_steps += 1
             val_mae = val_mae_sum / max(1, val_steps)
-            val_rel_l2 = val_rel_l2_sum / max(1, val_steps)
-            val_opt_loss = val_opt_loss_sum / max(1, val_steps)
-            val_rel_l2_denorm = val_rel_l2_denorm_sum / max(1, val_steps)
 
             # --- Best checkpoint + early stopping ---
-            # Save best model whenever val improves, regardless of patience setting.
-            if val_opt_loss < best_val_opt_loss - 1e-4:
-                best_val_opt_loss = val_opt_loss
+            # Save best model whenever validation MAE improves.
+            if val_mae < best_val_mae - 1e-4:
+                best_val_mae = val_mae
                 best_epoch = ep + 1
                 epochs_no_improve = 0
                 torch.save(model.state_dict(), best_model_path)
@@ -443,7 +392,7 @@ def main():
                 if opt.patience > 0 and epochs_no_improve >= opt.patience:
                     print(f"\nEarly stopping at epoch {ep+1} "
                            f"(no improvement for {opt.patience} epochs, "
-                           f"best val opt loss {best_val_opt_loss:.4e} at epoch "
+                           f"best val MAE {best_val_mae:.4e} at epoch "
                            f"{best_epoch}).")
                     save_checkpoint(ep)
                     break
@@ -478,9 +427,6 @@ def main():
                     vis_idx += 1
 
             train_mae /= max(1, train_steps)
-            train_rel_l2 /= max(1, train_steps)
-            train_opt_loss /= max(1, train_steps)
-            train_rel_l2_denorm /= max(1, train_steps)
 
             t2 = default_timer()
             lr_now = scheduler.get_last_lr()[0]
@@ -504,11 +450,8 @@ def main():
             patience_str = f" | no-improve {epochs_no_improve}/{opt.patience}" if opt.patience > 0 else ""
             output = (
                 f"Ep {ep+1}/{epochs} | {t2-t1:.1f}s | lr {lr_now:.2e} | ETA {eta_compact}\n"
-                f"Train — MAE {train_mae:.4e} | RelL2 {train_rel_l2:.4e} | OptLoss {train_opt_loss:.4e}\n"
-                f"\033[32mVal\033[0m   — MAE {val_mae:.4e} | RelL2 {val_rel_l2:.4e} | "
-                f"OptLoss {val_opt_loss:.4e}{patience_str}\n"
-                f"Diag  — PhysRelL2 train {train_rel_l2_denorm:.4e} | "
-                f"\033[32mval {val_rel_l2_denorm:.4e}\033[0m\n"
+                f"Train — MAE {train_mae:.4e}\n"
+                f"\033[32mVal\033[0m   — MAE {val_mae:.4e}{patience_str}\n"
                 f"{chart}\n"
                 f"  log10(MAE): train {log10_mae_history[-1]:.3f}  \033[32mval {log10_val_mae_history[-1]:.3f}\033[0m"
             )
@@ -520,21 +463,12 @@ def main():
             prev_n_lines = n_lines
 
             loss_history['train_mae'].append(train_mae)
-            loss_history['train_rel_l2'].append(train_rel_l2)
-            loss_history['train_opt_loss'].append(train_opt_loss)
-            loss_history['train_rel_l2_denorm'].append(train_rel_l2_denorm)
             loss_history['val_mae'].append(val_mae)
-            loss_history['val_rel_l2'].append(val_rel_l2)
-            loss_history['val_opt_loss'].append(val_opt_loss)
-            loss_history['val_rel_l2_denorm'].append(val_rel_l2_denorm)
 
             with open(log_path, 'a') as log:
                 log.write(
                     f"{ep+1:>6}  {t2-t1:>7.1f}  {lr_now:>10.3e}  "
-                    f"{train_mae:>10.6f}  {train_rel_l2:>10.6f}  "
-                    f"{train_opt_loss:>10.6f}  {train_rel_l2_denorm:>11.6f}  "
-                    f"{val_mae:>10.6f}  {val_rel_l2:>11.6f}  "
-                    f"{val_opt_loss:>10.6f}  {val_rel_l2_denorm:>11.6f}  "
+                    f"{train_mae:>12.6f}  {val_mae:>12.6f}  "
                     f"{log10_mae_history[-1]:>10.4f}  {eta_str:>12}\n"
                 )
 
@@ -552,13 +486,13 @@ def main():
     h, rem = divmod(int(elapsed), 3600)
     m, s = divmod(rem, 60)
     print(f"\nTraining complete. Total time: {h}h {m}m {s}s")
-    print(f"Best val opt loss: {best_val_opt_loss:.4e}  (epoch {best_epoch})")
+    print(f"Best val MAE: {best_val_mae:.4e}  (epoch {best_epoch})")
     with open(log_path, 'a') as log:
         log.write(f"{'-'*70}\n")
         log.write(
             f"  Run finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
             f"Total time: {h}h {m}m {s}s  |  "
-            f"Best val opt loss: {best_val_opt_loss:.4e} at epoch {best_epoch}\n"
+            f"Best val MAE: {best_val_mae:.4e} at epoch {best_epoch}\n"
         )
 
 

@@ -95,15 +95,15 @@ Use `--fast` for a short smoke test that trains on a tiny subset of the data and
 - Batch size: 16 (per gradient step)
 - Optimizer: Custom Adam with `weight_decay=1e-4`
 - Learning rate: 0.001 with StepLR scheduler (`step_size=500`, `gamma=0.5`)
-- Early stopping: `--patience 500` (default; monitors optimized validation loss, 0 = disabled)
-- Loss: Optimized on normalized MAE (L1) + normalized Relative L2; also reports denormalized Relative L2 as a diagnostic metric
+- Early stopping: `--patience 500` (default; monitors validation MAE, 0 = disabled)
+- Loss: MAE (L1) on normalized targets
 
 **Output** (paths are relative to project root):
 - Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
-- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train/val MAE, normalized Relative L2, optimized loss, and denormalized Relative L2 diagnostic)
+- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train and validation MAE)
 - Validation images: `experiments/<param>/visualizations/` (one per epoch)
 
-Checkpoints created before the normalized-loss refactor are not compatible with `--resume`; start a fresh run instead of resuming an older `training_state.pt`.
+Checkpoints created before the MAE-only refactor are not compatible with `--resume`; start a fresh run instead of resuming an older `training_state.pt`.
 
 ### Inference
 
@@ -133,12 +133,11 @@ At inference time the model receives ground-truth simulation frames as input for
 
 ### Loss Functions
 
-The model optimizes a composite loss (defined in `src/utilities.py`):
+The model optimizes a single loss:
 
 1. **MAE Loss (L1)**: Mean absolute error on normalized predictions
-2. **Relative L2 Loss (LpLoss)**: `‖prediction − target‖₂ / ‖target‖₂` computed on the same normalized tensors
-3. **Optimized loss**: `opt_loss = mae + rel_l2`
-4. **Diagnostic metric**: denormalized relative L2 is reported for monitoring, but is not used for backpropagation or early stopping
+
+Validation MAE is also used for early stopping and best-checkpoint selection.
 
 ### Normalization
 
