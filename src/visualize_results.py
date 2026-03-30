@@ -80,6 +80,54 @@ def _format_alfven_time_label(param, frame):
     return f"t = {t_over_ta:.2f} t_A"
 
 
+def compute_power_spectrum(field):
+    """Compute the 1D isotropic power spectrum of a 2D field.
+
+    P(k) = sum_{|k|=k} |f_hat(k)|^2   (paper §Spectral Analysis)
+
+    Returns
+    -------
+    k_bins : ndarray, shape (k_max,)   integer wavenumbers 1..k_max
+    P_k    : ndarray, shape (k_max,)   summed power per wavenumber bin
+    """
+    H, W = field.shape
+    f_hat = np.fft.fft2(field)
+    psd2d = np.abs(f_hat) ** 2
+
+    kx = np.fft.fftfreq(W) * W   # integer wavenumbers along x
+    ky = np.fft.fftfreq(H) * H   # integer wavenumbers along y
+    KX, KY = np.meshgrid(kx, ky)
+    K = np.sqrt(KX ** 2 + KY ** 2)
+
+    k_int = np.round(K).astype(int)
+    k_max = min(H, W) // 2
+    k_bins = np.arange(1, k_max + 1)
+    P_k = np.array(
+        [psd2d[k_int == k].sum() for k in k_bins], dtype=np.float64
+    )
+    return k_bins, P_k
+
+
+def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True):
+    """Draw 1D power spectra on a log-log axis.
+
+    Parameters
+    ----------
+    with_target : bool
+        When True, draw both reference and prediction spectra.
+        When False, draw only the prediction spectrum (rollout-only frames).
+    """
+    if with_target and P_target is not None:
+        ax.loglog(k_bins, P_target, color='steelblue', label='Reference')
+    ax.loglog(k_bins, P_pred, color='darkorange',
+              linestyle='--', label='Prediction')
+    ax.set_xlabel('Wavenumber k')
+    ax.set_ylabel('P(k)')
+    ax.set_title('Power spectrum')
+    ax.legend(fontsize=9)
+    ax.grid(True, which='both', alpha=0.3)
+
+
 def parse_pred_file(path):
     """Return (sim_id, is_rollout) from a pred_sim_*.npy filename.
 
@@ -96,9 +144,18 @@ def parse_pred_file(path):
 
 def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
                         target, pred_t, vmin, vmax, eabs, suffix=''):
-    """Render a 3-panel (target | prediction | error) PNG."""
+    """Render a two-row PNG.
+
+    Row 0: reference | prediction | error  (field panels)
+    Row 1: power spectrum (target vs prediction) spanning first two columns
+    """
     error = target - pred_t
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+    k_bins, P_target = compute_power_spectrum(target)
+    _, P_pred = compute_power_spectrum(pred_t)
+
+    fig = plt.figure(figsize=(15, 10), constrained_layout=True)
+    gs = fig.add_gridspec(2, 3, height_ratios=[2, 1.2])
+
     title = f'{param}  |  sim {sim_id}  |  frame {frame}'
     time_label = _format_alfven_time_label(param, frame)
     if time_label:
@@ -107,20 +164,27 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
         title += f'  |  {suffix}'
     fig.suptitle(title, fontsize=12)
 
-    im0 = axes[0].pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
-    axes[0].set_title('Reference')
-    axes[0].set_aspect('equal')
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax1 = fig.add_subplot(gs[0, 1])
+    ax2 = fig.add_subplot(gs[0, 2])
+    ax_spec = fig.add_subplot(gs[1, :2])
 
-    im1 = axes[1].pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
-    axes[1].set_title('Prediction')
-    axes[1].set_aspect('equal')
+    im0 = ax0.pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
+    ax0.set_title('Reference')
+    ax0.set_aspect('equal')
 
-    im2 = axes[2].pcolormesh(error, vmin=-eabs, vmax=eabs, cmap='RdBu_r')
-    axes[2].set_title('Error (Target - Prediction)')
-    axes[2].set_aspect('equal')
+    im1 = ax1.pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
+    ax1.set_title('Prediction')
+    ax1.set_aspect('equal')
 
-    for ax, im in zip(axes, [im0, im1, im2]):
+    im2 = ax2.pcolormesh(error, vmin=-eabs, vmax=eabs, cmap='RdBu_r')
+    ax2.set_title('Error (Target - Prediction)')
+    ax2.set_aspect('equal')
+
+    for ax, im in zip([ax0, ax1, ax2], [im0, im1, im2]):
         fig.colorbar(im, ax=ax, location='bottom', shrink=0.9, pad=0.08)
+
+    _plot_spectra(ax_spec, k_bins, P_target, P_pred, with_target=True)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
@@ -128,8 +192,16 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
 
 def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
                           pred_t, vmin, vmax, suffix=''):
-    """Render a single-panel (prediction only) PNG, same figure size as 3-panel."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+    """Render a two-row PNG for prediction-only rollout frames.
+
+    Row 0: blank | prediction | blank  (same column widths as _save_frame_with_gt)
+    Row 1: prediction power spectrum spanning first two columns
+    """
+    k_bins, P_pred = compute_power_spectrum(pred_t)
+
+    fig = plt.figure(figsize=(15, 10), constrained_layout=True)
+    gs = fig.add_gridspec(2, 3, height_ratios=[2, 1.2])
+
     title = f'{param}  |  sim {sim_id}  |  frame {frame}  |  prediction only'
     time_label = _format_alfven_time_label(param, frame)
     if time_label:
@@ -138,14 +210,21 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
         title += f'  |  {suffix}'
     fig.suptitle(title, fontsize=12)
 
-    im1 = axes[1].pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
-    axes[1].set_title('Prediction')
-    axes[1].set_aspect('equal')
-    fig.colorbar(im1, ax=axes[1], location='bottom', shrink=0.9, pad=0.08)
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax1 = fig.add_subplot(gs[0, 1])
+    ax2 = fig.add_subplot(gs[0, 2])
+    ax_spec = fig.add_subplot(gs[1, :2])
+
+    im1 = ax1.pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
+    ax1.set_title('Prediction')
+    ax1.set_aspect('equal')
+    fig.colorbar(im1, ax=ax1, location='bottom', shrink=0.9, pad=0.08)
 
     # Blank flanking panels keep figure size consistent for movies
-    for ax in (axes[0], axes[2]):
+    for ax in (ax0, ax2):
         ax.set_visible(False)
+
+    _plot_spectra(ax_spec, k_bins, None, P_pred, with_target=False)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
