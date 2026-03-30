@@ -111,7 +111,33 @@ def compute_power_spectrum(field):
     return k_bins, P_k
 
 
-def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True):
+def _spectrum_ylim(P_arrays, pad=0.5):
+    """Derive stable log-scale y-limits from a collection of power spectra.
+
+    Parameters
+    ----------
+    P_arrays : iterable of ndarray
+        1D power spectra P(k) collected across all frames to be shown in a
+        single movie/simulation.
+    pad : float
+        Extra decades of padding added to each side of the dynamic range.
+
+    Returns
+    -------
+    (ymin, ymax) : tuple of float, or None when no positive values exist.
+    """
+    pos_vals = np.concatenate(
+        [P[P > 0] for P in P_arrays if np.any(P > 0)]
+    )
+    if pos_vals.size == 0:
+        return None
+    log_min = np.log10(pos_vals.min())
+    log_max = np.log10(pos_vals.max())
+    return 10 ** (log_min - pad), 10 ** (log_max + pad)
+
+
+def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True,
+                 ylim=None):
     """Draw 1D power spectra on a log-log axis.
 
     Parameters
@@ -119,6 +145,9 @@ def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True):
     with_target : bool
         When True, draw both reference and prediction spectra.
         When False, draw only the prediction spectrum (rollout-only frames).
+    ylim : tuple of (float, float) or None
+        Fixed (ymin, ymax) for the y-axis. When None, Matplotlib auto-scales.
+        Pass a simulation-level value to keep the axis stable across frames.
     """
     if with_target and P_target is not None:
         ax.loglog(k_bins, P_target, color='steelblue', label='Reference')
@@ -129,6 +158,8 @@ def _plot_spectra(ax, k_bins, P_target, P_pred, with_target=True):
     ax.set_title('Power spectrum')
     ax.legend(fontsize=9)
     ax.grid(True, which='both', alpha=0.3)
+    if ylim is not None:
+        ax.set_ylim(ylim)
 
 
 def parse_pred_file(path):
@@ -146,7 +177,8 @@ def parse_pred_file(path):
 
 
 def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
-                        target, pred_t, vmin, vmax, eabs, suffix=''):
+                        target, pred_t, vmin, vmax, eabs, suffix='',
+                        spec_ylim=None):
     """Render a two-row PNG.
 
     Row 0: reference | prediction | error  (field panels)
@@ -187,14 +219,15 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
     for ax, im in zip([ax0, ax1, ax2], [im0, im1, im2]):
         fig.colorbar(im, ax=ax, location='bottom', shrink=0.9, pad=0.08)
 
-    _plot_spectra(ax_spec, k_bins, P_target, P_pred, with_target=True)
+    _plot_spectra(ax_spec, k_bins, P_target, P_pred, with_target=True,
+                  ylim=spec_ylim)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
 
 
 def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
-                          pred_t, vmin, vmax, suffix=''):
+                          pred_t, vmin, vmax, suffix='', spec_ylim=None):
     """Render a two-row PNG for prediction-only rollout frames.
 
     Row 0: blank | prediction | blank  (same column widths as _save_frame_with_gt)
@@ -227,7 +260,8 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
     for ax in (ax0, ax2):
         ax.set_visible(False)
 
-    _plot_spectra(ax_spec, k_bins, None, P_pred, with_target=False)
+    _plot_spectra(ax_spec, k_bins, None, P_pred, with_target=False,
+                  ylim=spec_ylim)
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
@@ -242,12 +276,14 @@ def _render_frame_job(job):
     Returns the output filename (used to count completions).
     """
     vis_dir = Path(job['vis_dir'])
+    spec_ylim = job.get('spec_ylim')
     if job['target'] is not None:
         _save_frame_with_gt(
             vis_dir, job['fname'], job['param'], job['sim_id'],
             job['frame'], job['target'], job['pred_t'],
             job['vmin'], job['vmax'], job['eabs'],
             suffix=job.get('suffix', ''),
+            spec_ylim=spec_ylim,
         )
     else:
         _save_frame_pred_only(
@@ -255,6 +291,7 @@ def _render_frame_job(job):
             job['frame'], job['pred_t'],
             job['vmin'], job['vmax'],
             suffix=job.get('suffix', ''),
+            spec_ylim=spec_ylim,
         )
     return job['fname']
 
@@ -323,6 +360,16 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
     vmax_global = float(max(pred.max(), y.max()))
     eabs_global = float(np.max(np.abs(y - pred)))
 
+    # Precompute power spectra across all frames to get a stable y-axis range
+    # for the spectrum subplot — avoids jumpy limits in the rendered movie.
+    all_spectra = []
+    for s in range(pred.shape[0]):
+        for t in range(pred.shape[3]):
+            _, P_y = compute_power_spectrum(y[s, :, :, t])
+            _, P_p = compute_power_spectrum(pred[s, :, :, t])
+            all_spectra.extend([P_y, P_p])
+    spec_ylim_global = _spectrum_ylim(all_spectra)
+
     jobs = []
     skipped = 0
     n_samples = pred.shape[0]
@@ -350,6 +397,7 @@ def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
                 'vmax': vmax_global,
                 'eabs': eabs_global,
                 'suffix': '',
+                'spec_ylim': spec_ylim_global,
             })
 
     total = _run_jobs(
@@ -420,6 +468,22 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
         n_frames if max_frames is None else min(n_frames, max_frames)
     )
 
+    # Precompute power spectra across all frames for a stable spectrum y-axis.
+    all_spectra = []
+    for i in range(frame_limit):
+        _, P_p = compute_power_spectrum(pred[:, :, i])
+        all_spectra.append(P_p)
+        if dense:
+            frame_abs = N_INPUT_FRAMES + i
+            if frame_abs < ref.shape[0]:
+                _, P_r = compute_power_spectrum(ref[frame_abs])
+                all_spectra.append(P_r)
+        else:
+            if i < ref.shape[2]:
+                _, P_r = compute_power_spectrum(ref[:, :, i])
+                all_spectra.append(P_r)
+    spec_ylim_global = _spectrum_ylim(all_spectra)
+
     jobs = []
     skipped = 0
 
@@ -453,6 +517,7 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
                 'vmax': vmax_global,
                 'eabs': eabs_global,
                 'suffix': 'rollout',
+                'spec_ylim': spec_ylim_global,
             })
         else:
             jobs.append({
@@ -467,6 +532,7 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force,
                 'vmax': vmax_global,
                 'eabs': 0.0,
                 'suffix': 'rollout',
+                'spec_ylim': spec_ylim_global,
             })
 
     total = _run_jobs(
