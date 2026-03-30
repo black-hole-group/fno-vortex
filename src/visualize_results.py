@@ -27,6 +27,10 @@ Usage:
 
 Run inference.py first to produce pred_sim_*.npy files.
 For full-horizon rollout reference, run prepare_reference.py first.
+
+For Idefix-derived data, frame titles also show time in Alfvén units. The
+conversion is derived from the fixed Idefix box size, initial density,
+magnetic-field amplitude, and stored timestep defined in data/idefix/.
 """
 
 import numpy as np
@@ -46,6 +50,34 @@ EXPERIMENTS_DIR = os.path.join(ROOT_DIR, 'experiments')
 
 # Number of initial input frames fed to the model (matches inference.py)
 N_INPUT_FRAMES = 5
+
+# Fixed Idefix setup parameters used to derive t_A = L / v_A. The magnetic
+# field in setup.cpp already includes the 1/sqrt(4*pi) normalization factor, so
+# the code-unit Alfvén speed is B0 / sqrt(rho0).
+IDEFIX_BOX_LENGTH = 1.0
+IDEFIX_TIMESTEP = 0.05
+IDEFIX_INITIAL_DENSITY = 25.0 / (36.0 * np.pi)
+IDEFIX_INITIAL_B_FIELD = 1.0 / np.sqrt(4.0 * np.pi)
+IDEFIX_ALFVEN_SPEED = IDEFIX_INITIAL_B_FIELD / np.sqrt(IDEFIX_INITIAL_DENSITY)
+IDEFIX_ALFVEN_TIME = IDEFIX_BOX_LENGTH / IDEFIX_ALFVEN_SPEED
+IDEFIX_T_OVER_TA_PER_FRAME = IDEFIX_TIMESTEP / IDEFIX_ALFVEN_TIME
+
+
+def _frame_to_alfven_time(param, frame):
+    """Convert an absolute frame index to t/t_A when configured."""
+    if param.startswith("fargo3d/"):
+        return None
+
+    return frame * IDEFIX_T_OVER_TA_PER_FRAME
+
+
+def _format_alfven_time_label(param, frame):
+    """Return a paper-style Alfvén-time label for figure titles."""
+    t_over_ta = _frame_to_alfven_time(param, frame)
+    if t_over_ta is None:
+        return None
+
+    return f"t = {t_over_ta:.2f} t_A"
 
 
 def parse_pred_file(path):
@@ -68,6 +100,9 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
     error = target - pred_t
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
     title = f'{param}  |  sim {sim_id}  |  frame {frame}'
+    time_label = _format_alfven_time_label(param, frame)
+    if time_label:
+        title += f'  |  {time_label}'
     if suffix:
         title += f'  |  {suffix}'
     fig.suptitle(title, fontsize=12)
@@ -96,6 +131,9 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
     """Render a single-panel (prediction only) PNG, same figure size as 3-panel."""
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
     title = f'{param}  |  sim {sim_id}  |  frame {frame}  |  prediction only'
+    time_label = _format_alfven_time_label(param, frame)
+    if time_label:
+        title += f'  |  {time_label}'
     if suffix:
         title += f'  |  {suffix}'
     fig.suptitle(title, fontsize=12)
