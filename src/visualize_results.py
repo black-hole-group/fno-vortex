@@ -7,20 +7,26 @@ by inference.py.
 Teacher-forced (pred_sim_<id>.npy):
   Shape (20, 128, 128, T_out) — 20 sliding-window samples.
   For each sample s and output step t, absolute frame = 5 + s + t.
-  Renders: target | prediction | error
+  Renders: reference | prediction | error
 
 Autoregressive rollout (pred_sim_<id>_rollout.npy):
   Shape (1, 128, 128, 20*N) — single long trajectory from sample 0.
   Absolute frame index i maps to frame 5 + i.
-  Ground truth (y_sim_<id>.npy sample 0) covers indices 0 .. T_out-1.
-  - When ground truth exists: target | prediction | error
-  - Beyond ground-truth horizon: prediction-only panel
+
+  Reference data is taken from (in order of preference):
+    1. ref_sim_<id>.npy in the test directory — dense full-trajectory
+       array (N_frames, 128, 128) produced by prepare_reference.py.
+       When available, every rollout frame gets a reference|pred|error panel.
+    2. y_sim_<id>.npy sample 0 — sparse supervised windows.
+       Only the first T_out frames have reference; beyond that the panel
+       shows prediction only.
 
 Usage:
     python visualize_results.py --param <parameter_name> \\
         [--experiments-dir <path>] [--force]
 
 Run inference.py first to produce pred_sim_*.npy files.
+For full-horizon rollout reference, run prepare_reference.py first.
 """
 
 import numpy as np
@@ -67,7 +73,7 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
     fig.suptitle(title, fontsize=12)
 
     im0 = axes[0].pcolormesh(target, vmin=vmin, vmax=vmax, cmap='viridis')
-    axes[0].set_title('Target')
+    axes[0].set_title('Reference')
     axes[0].set_aspect('equal')
 
     im1 = axes[1].pcolormesh(pred_t, vmin=vmin, vmax=vmax, cmap='viridis')
@@ -105,6 +111,25 @@ def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
 
     plt.savefig(vis_dir / fname, dpi=100)
     plt.close(fig)
+
+
+def _load_rollout_reference(test_dir, sim_id):
+    """Load the reference trajectory for rollout visualization.
+
+    Tries, in order:
+      1. ref_sim_<id>.npy — dense full-trajectory array (N_frames, H, W)
+         produced by prepare_reference.py.  Returns (ref_array, True).
+      2. y_sim_<id>.npy sample 0 — sparse supervised windows (H, W, T_out).
+         Returns (ref_sparse, False).
+    """
+    ref_path = test_dir / f"ref_sim_{sim_id}.npy"
+    if ref_path.exists():
+        ref = np.load(ref_path)  # (N_frames, H, W)
+        return ref, True
+
+    # Fallback: sparse reference from first supervised window only
+    y = np.load(test_dir / f"y_sim_{sim_id}.npy")  # (n_samples, H, W, T_out)
+    return y[0], False             # (H, W, T_out)
 
 
 def visualize_teacher_forced(pred_path, sim_id, test_dir, vis_dir,
@@ -147,26 +172,56 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force):
     """Visualize an autoregressive rollout prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
-    y    shape: (n_samples, 128, 128, T_out) — GT, sample 0 used
 
-    Absolute frame index i → frame N_INPUT_FRAMES + i.
-    GT is available for i in 0 .. T_out-1 (from y[0]).
-    Beyond that, prediction-only panels are rendered.
+    Reference data (in order of preference):
+      - ref_sim_<id>.npy  (dense, shape (N_frames, H, W)) — every rollout
+        frame is compared against the true simulation.
+      - y_sim_<id>.npy sample 0 (sparse, covers indices 0..T_out-1 only);
+        frames beyond T_out fall back to prediction-only.
+
+    Absolute frame index i → absolute simulation frame N_INPUT_FRAMES + i.
+    Dense reference: ref[N_INPUT_FRAMES + i].
     """
     pred = np.load(pred_path)          # (1, 128, 128, 20*N)
     pred = pred[0]                     # (128, 128, 20*N)
     n_frames = pred.shape[2]
 
-    y = np.load(test_dir / f"y_sim_{sim_id}.npy")  # (n_samples, 128, 128, T_out)
-    y0 = y[0]                          # (128, 128, T_out)
-    t_out = y0.shape[2]
+    ref, dense = _load_rollout_reference(test_dir, sim_id)
+    # dense=True:  ref shape (N_sim_frames, H, W)
+    # dense=False: ref shape (H, W, T_out) — sparse window 0 only
 
-    # Global color scale across all rollout frames + available GT
-    vmin_global = min(float(pred.min()), float(y0.min()))
-    vmax_global = max(float(pred.max()), float(y0.max()))
-    # Error scale from the GT-covered overlap only
-    overlap = min(n_frames, t_out)
-    eabs_global = float(np.max(np.abs(y0[:, :, :overlap] - pred[:, :, :overlap])))
+    if dense:
+        n_ref = ref.shape[0]
+        ref_available = n_ref  # ref[abs_frame] valid for abs_frame < n_ref
+        # Build arrays for color scale computation over available overlap
+        max_abs = min(N_INPUT_FRAMES + n_frames, n_ref)
+        pred_for_scale = pred[:, :, :max_abs - N_INPUT_FRAMES]
+        ref_for_scale  = ref[N_INPUT_FRAMES:max_abs]
+        vmin_global = min(float(pred.min()), float(ref_for_scale.min()))
+        vmax_global = max(float(pred.max()), float(ref_for_scale.max()))
+        # Transpose ref_for_scale to (H,W,T) for error calc
+        eabs_global = float(
+            np.max(np.abs(ref_for_scale - pred_for_scale.transpose(2, 0, 1)))
+        )
+        if n_ref < N_INPUT_FRAMES + n_frames:
+            print(
+                f"  sim {sim_id}: reference has {n_ref} frames, "
+                f"rollout needs {N_INPUT_FRAMES + n_frames}; "
+                f"last {N_INPUT_FRAMES + n_frames - n_ref} frames will be "
+                "prediction-only"
+            )
+    else:
+        # Sparse fallback: ref is y0 with shape (H, W, T_out)
+        t_out = ref.shape[2]
+        overlap = min(n_frames, t_out)
+        vmin_global = min(float(pred.min()), float(ref.min()))
+        vmax_global = max(float(pred.max()), float(ref.max()))
+        eabs_global = float(np.max(np.abs(ref[:, :, :overlap] - pred[:, :, :overlap])))
+        print(
+            f"  sim {sim_id}: no ref_sim_{sim_id}.npy found; "
+            f"using sparse y_sim reference (frames 0..{t_out - 1} only). "
+            "Run prepare_reference.py for full-horizon reference."
+        )
 
     total = 0
     skipped = 0
@@ -182,10 +237,17 @@ def visualize_rollout(pred_path, sim_id, test_dir, vis_dir, param, force):
 
         pred_t = pred[:, :, i]
 
-        if i < t_out:
+        # Determine if reference exists for this frame
+        if dense:
+            has_ref = frame < ref.shape[0]
+        else:
+            has_ref = i < ref.shape[2]
+
+        if has_ref:
+            ref_t = ref[frame] if dense else ref[:, :, i]
             _save_frame_with_gt(
                 vis_dir, fname, param, sim_id, frame,
-                y0[:, :, i], pred_t,
+                ref_t, pred_t,
                 vmin_global, vmax_global, eabs_global,
                 suffix='rollout',
             )

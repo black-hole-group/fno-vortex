@@ -1,0 +1,174 @@
+"""
+Prepare dense reference trajectories for rollout visualization.
+
+Reads raw Idefix VTK simulation outputs and saves a compact reference file
+per test simulation per field:
+
+    data/<param>/test/ref_sim_<id>.npy   shape (N_frames, 128, 128)
+
+This file is read by visualize_results.py to show the true simulation
+evolution alongside autoregressive rollout predictions.
+
+Run once before calling visualize_results.py on rollout outputs:
+
+    python src/prepare_reference.py \\
+        --param idefix/numpy/t20/by \\
+        [--runs-dir data/idefix/runs] \\
+        [--params-csv data/idefix/params.csv] \\
+        [--data-dir data] \\
+        [--split test]
+
+Requires $IDEFIX_DIR to be set (or idefix/ to exist at the repo root)
+so that pytools/vtk_io.py can be found.
+"""
+
+import argparse
+import csv
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+
+SCRIPT_DIR = Path(__file__).parent.resolve()
+ROOT_DIR = SCRIPT_DIR.parent
+
+# ── locate Idefix pytools/vtk_io.py ──────────────────────────────────────────
+_idefix_dir = os.environ.get("IDEFIX_DIR")
+if _idefix_dir:
+    sys.path.insert(0, _idefix_dir)
+else:
+    _guess = ROOT_DIR / "idefix"
+    if _guess.exists():
+        sys.path.insert(0, str(_guess))
+
+try:
+    from pytools.vtk_io import readVTK  # noqa: E402
+    _HAS_VTK = True
+except ImportError:
+    _HAS_VTK = False
+
+# Reverse of convert_to_npy.py FIELD_MAP: leaf param name → VTK field key
+_PARAM_TO_VTK = {
+    "density": "RHO",
+    "vx":      "VX1",
+    "vy":      "VX2",
+    "bx":      "BX1",
+    "by":      "BX2",
+}
+
+
+def _field_from_param(param):
+    """Extract the leaf field name from a --param path.
+
+    E.g. 'idefix/numpy/t20/by' → 'by'
+         'density'               → 'density'
+    """
+    return Path(param).name
+
+
+def load_sim_field(run_dir, vtk_field, n_frames=1000):
+    """Load n_frames snapshots of vtk_field from run_dir.
+
+    Returns ndarray of shape (n_frames, H, W), float32.
+    """
+    run_dir = Path(run_dir)
+    vtk_files = sorted(run_dir.glob("data.????.vtk"))[:n_frames]
+
+    if len(vtk_files) == 0:
+        raise FileNotFoundError(f"No VTK files found in {run_dir}")
+    if len(vtk_files) < n_frames:
+        print(f"  WARNING: only {len(vtk_files)} frames available in {run_dir}")
+
+    frames = []
+    for vtk_path in vtk_files:
+        data = readVTK(str(vtk_path)).data
+        frames.append(np.array(data[vtk_field]).squeeze().astype(np.float32))
+    return np.stack(frames, axis=0)   # (n_frames, H, W)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Save dense reference trajectories for rollout visualisation."
+    )
+    parser.add_argument("--param", type=str, required=True,
+                        help="Parameter path, e.g. idefix/numpy/t20/by")
+    parser.add_argument("--runs-dir",
+                        default=str(ROOT_DIR / "data" / "idefix" / "runs"),
+                        help="Directory containing sim_NNN/ subdirectories")
+    parser.add_argument("--params-csv",
+                        default=str(ROOT_DIR / "data" / "idefix" / "params.csv"),
+                        help="Path to params.csv")
+    parser.add_argument("--data-dir",
+                        default=str(ROOT_DIR / "data"),
+                        help="Root data directory")
+    parser.add_argument("--split", type=str, default="test",
+                        help="Which split to prepare reference files for")
+    parser.add_argument("--n-frames", type=int, default=1000,
+                        help="Number of frames to extract per simulation")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite existing ref_sim_*.npy files")
+    args = parser.parse_args()
+
+    if not _HAS_VTK:
+        print(
+            "ERROR: pytools.vtk_io not found.\n"
+            "Set $IDEFIX_DIR to your Idefix source tree, then re-run."
+        )
+        sys.exit(1)
+
+    field = _field_from_param(args.param)
+    if field not in _PARAM_TO_VTK:
+        print(
+            f"ERROR: unknown field '{field}'.\n"
+            f"Supported fields: {', '.join(_PARAM_TO_VTK)}"
+        )
+        sys.exit(1)
+
+    vtk_field = _PARAM_TO_VTK[field]
+    runs_dir = Path(args.runs_dir)
+    out_dir = Path(args.data_dir) / args.param / args.split
+
+    # Load params.csv to find simulations in the requested split
+    with open(args.params_csv) as f:
+        rows = list(csv.DictReader(f))
+    test_rows = [r for r in rows if r["split"] == args.split]
+
+    if not test_rows:
+        print(f"No simulations with split='{args.split}' found in {args.params_csv}")
+        sys.exit(1)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Field  : {field}  (VTK key: {vtk_field})")
+    print(f"Split  : {args.split}  ({len(test_rows)} sims)")
+    print(f"Output : {out_dir}")
+
+    for row in test_rows:
+        sim_id = int(row["sim_id"])
+        sim_id_str = f"{sim_id:03d}"
+        out_path = out_dir / f"ref_sim_{sim_id_str}.npy"
+
+        if out_path.exists() and not args.force:
+            print(f"  sim_{sim_id_str}: already exists, skipping (--force to overwrite)")
+            continue
+
+        run_dir = runs_dir / f"sim_{sim_id_str}"
+        if not run_dir.exists():
+            print(f"  sim_{sim_id_str}: run directory not found ({run_dir}), skipping")
+            continue
+
+        print(f"  sim_{sim_id_str}: loading {args.n_frames} frames ... ", end="", flush=True)
+        try:
+            traj = load_sim_field(run_dir, vtk_field, args.n_frames)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            continue
+
+        np.save(out_path, traj)
+        print(f"saved {out_path.name}  shape={traj.shape}  dtype={traj.dtype}")
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
