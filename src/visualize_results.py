@@ -459,12 +459,11 @@ def _plot_magnetic_dissipation(ax, frame, dissipation):
         )
         break
 
+    ax.set_yscale('log')
     ax.set_title(r'Magnetic dissipation $\epsilon_M$')
     ax.set_xlabel(dissipation['xlabel'])
     ax.set_ylabel(r'$\epsilon_M$')
-    ax.grid(True, alpha=0.3)
-    if dissipation['ylim'] is not None:
-        ax.set_ylim(dissipation['ylim'])
+    ax.grid(True, alpha=0.3, which='both')
     ax.legend(fontsize=9)
 
 
