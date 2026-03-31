@@ -30,10 +30,9 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 - **Validation:** uses `data/<param>/val/` for model selection and early stopping; `test/` is never read during training
 - `--fast` runs a tiny smoke test with fewer files, fewer samples, and more frequent visualizations
 - **Outputs:**
-  - Latest model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
-  - Best model checkpoint: `experiments/<param>/checkpoints/model_best.pt`
-  - Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train and validation MAE)
-  - Validation images: `experiments/<param>/visualizations/`
+  - **Legacy layout:** checkpoints in `experiments/<param>/checkpoints/`, validation images in `experiments/<param>/visualizations/`
+  - **Run-scoped layout:** artifacts in `experiments/<run>/params/<param>/`, validation images in `experiments/<run>/params/<param>/renders/`
+  - New run-scoped experiments also write `experiments/<run>/manifest.json`
 - Checkpoints created before the MAE-only refactor are intentionally incompatible with `--resume`
 
 ### Inference
@@ -42,21 +41,28 @@ python src/train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 python src/inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
 ```
 
-- Loads model from `experiments/<param>/checkpoints/model_best.pt` if it exists, otherwise `model_64_30.pt` (or `--checkpoint` if given)
-- Runs over all available test files (counted dynamically), saves predictions to `experiments/<param>/visualizations/pred_sim_<id>.npy`
+- Resolves model artifacts from `--experiments-dir` and `--param`
+  - **Legacy layout:** loads from `experiments/<param>/checkpoints/`
+  - **Run-scoped layout:** loads from `experiments/<run>/params/<param>/`
+- Runs over all available test files (counted dynamically), saves predictions to the resolved artifact directory as `pred_sim_<id>.npy`
 - `--rollout-steps N` (default 1): teacher-forced mode uses ground-truth inputs for every window. With N>1, autoregressive rollout feeds the last 5 of 20 predicted frames back as input and repeats N times, producing 20×N frames; saved as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`.
+- Under a run-scoped root, short leaf params like `by` and `bx` are supported; legacy nested experiment trees also remain supported in place
 
 ### Visualization
 
 ```bash
-python src/visualize_results.py --param <parameter_name> [--experiments-dir <path>]
+python src/viz_scalar.py --param <parameter_name> [--experiments-dir <path>]
+python src/viz_vector.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
-- Loads `pred_<j>.npy` files saved by `inference.py` (does **not** re-run the model)
-- For each test file `j`, using sample index 0:
-  - 20 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
-  - 1 GIF: `sample_{j:02d}_evolution.gif` — animation across all 20 timesteps
-- Outputs saved to `experiments/<param>/visualizations/`
+- `viz_scalar.py` loads `pred_sim_*.npy` files saved by `inference.py` and renders scalar diagnostics without re-running the model
+- `viz_vector.py` loads paired component predictions (e.g. `bx` + `by` or `vx` + `vy`) and renders vector diagnostics
+- Scalar renders are written to the resolved render directory
+  - **Legacy layout:** `experiments/<param>/visualizations/`
+  - **Run-scoped layout:** `experiments/<run>/params/<param>/renders/`
+- Vector renders are written to a shared family directory
+  - **Legacy layout:** nested family directory such as `.../magnetic_vector_visualizations/`
+  - **Run-scoped layout:** `experiments/<run>/vector/<family>/`
 
 ### Linting
 
@@ -146,9 +152,11 @@ Two numerical solvers have been used:
 - `src/architecture.py` -- model definitions
 - `src/train.py` -- training logic
 - `src/inference.py` -- inference logic
+- `src/viz_scalar.py` -- scalar prediction visualization
+- `src/viz_vector.py` -- vector prediction visualization
+- `src/experiment_layout.py` -- shared legacy/run-scoped experiment path resolver
 - `src/utilities.py` -- loss functions, normalizers, and `DenseNet`
 - `src/Adam.py` -- custom Adam optimizer
-- `src/visualize_results.py` -- visualization of inference results
 - `src/architecture_diagram.py` -- architecture diagram generation
 
 ## Known Issues
@@ -166,5 +174,5 @@ Two numerical solvers have been used:
 All paths are relative to the project root:
 
 - **Data:** `data/<param>/[train|val|test]/`
-- **Checkpoints:** `experiments/<param>/checkpoints/`
-- **Visualizations:** `experiments/<param>/visualizations/`
+- **Legacy experiments:** `experiments/<param>/checkpoints/` and `experiments/<param>/visualizations/`
+- **Run-scoped experiments:** `experiments/<run>/manifest.json`, `experiments/<run>/params/<param>/`, and `experiments/<run>/vector/<family>/`

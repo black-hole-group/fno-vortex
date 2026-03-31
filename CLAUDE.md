@@ -22,35 +22,43 @@ cd src
 python train.py --param <parameter_name> [--experiments-dir <path>] [--fast]
 ```
 - `--param` selects which physical field to train on (e.g. `density`, `vy`, `by`; defaults to `density`)
-- Trains for 10,000 epochs with learning rate 0.001 and StepLR scheduling (step=500, γ=0.5)
-- Saves model checkpoint to `experiments/<param>/checkpoints/model_64_30.pt`
-- Saves loss history to `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train and validation MAE)
-- Saves one validation prediction image per epoch to `experiments/<param>/visualizations/`
+- Trains for 5,000 epochs with learning rate 0.001 and StepLR scheduling (step=500, γ=0.5)
+- Legacy layout writes checkpoints to `experiments/<param>/checkpoints/` and validation images to `experiments/<param>/visualizations/`
+- Run-scoped layout writes artifacts to `experiments/<run>/params/<param>/`, validation images to `experiments/<run>/params/<param>/renders/`, and metadata to `experiments/<run>/manifest.json`
 - `--fast` runs a short smoke test on a tiny subset of the data for quick training/display checks
 - Checkpoints created before the MAE-only refactor are intentionally incompatible with `--resume`
 
 **Running inference:**
 ```bash
 cd src
-python inference.py --param <parameter_name> [--rollout-steps N]
+python inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
 ```
-- Loads model from `experiments/<param>/checkpoints/model_64_30.pt`
-- Runs over all test files and saves denormalized predictions as `.npy` arrays to
-  `experiments/<param>/visualizations/pred_sim_<id>.npy`
+- Resolves checkpoints from the parameter artifact directory under `--experiments-dir`
+- Saves denormalized predictions as `pred_sim_<id>.npy` and `pred_sim_<id>_rollout.npy` in that same resolved artifact directory
+- Under a run-scoped root, short leaf params like `by` and `bx` are supported; legacy nested experiment trees remain supported in place
 - `--rollout-steps N` (default 1): with N=1, runs teacher-forced inference (each window uses ground-truth inputs). With N>1, runs autoregressive rollout: predicts 20 frames, feeds the last 5 predicted frames back as input, and repeats N times total, producing 20×N frames. Saves as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`
 
-**Visualizing results** (run after inference):
+**Visualizing scalar results** (run after inference):
 ```bash
 cd src
-python visualize_results.py --param <parameter_name> [--experiments-dir <path>]
+python viz_scalar.py --param <parameter_name> [--experiments-dir <path>]
 ```
-- Loads `pred_<j>.npy` files saved by `inference.py` (does **not** re-run the model)
-- For each test file `j`, using sample index 0:
-  - 10 PNGs: `sample_{j:02d}_time_{t:02d}.png` — 3-panel (target | prediction | error)
-  - 1 GIF:  `sample_{j:02d}_evolution.gif` — animation across all 10 timesteps
-- Outputs saved to `experiments/<param>/visualizations/`
+- Loads `pred_sim_*.npy` files saved by `inference.py` (does **not** re-run the model)
+- Writes scalar renders to the resolved render directory
+  - legacy layout: `experiments/<param>/visualizations/`
+  - run-scoped layout: `experiments/<run>/params/<param>/renders/`
 
-**Note on paths:** Data is read from `data/<param>/[train|val|test]/` and results are written to `experiments/<param>/`. All scripts resolve paths relative to the repository root using `__file__`, so they can be run from any working directory.
+**Visualizing vector results** (run after inference):
+```bash
+cd src
+python viz_vector.py --param <parameter_name> [--experiments-dir <path>]
+```
+- Loads paired component predictions such as `bx` + `by` or `vx` + `vy`
+- Writes vector renders to:
+  - legacy layout: nested family directories such as `.../magnetic_vector_visualizations/`
+  - run-scoped layout: `experiments/<run>/vector/<family>/`
+
+**Note on paths:** Data is read from `data/<param>/[train|val|test]/`. Experiment artifacts support two layouts: the original legacy layout under `experiments/<param>/...` and a newer run-scoped layout under `experiments/<run>/...`. Path resolution is centralized in `src/experiment_layout.py`, and scripts still resolve repository-relative defaults via `__file__`, so they can be run from any working directory.
 
 ## Architecture Details
 
