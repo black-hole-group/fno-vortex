@@ -6,6 +6,12 @@ from tqdm import tqdm
 from pathlib import Path
 
 from architecture import FNO3d
+from experiment_layout import (
+    ensure_param_layout,
+    prediction_file,
+    resolve_experiment_param,
+    write_manifest,
+)
 
 import os
 
@@ -84,32 +90,51 @@ def main():
     parser.add_argument("--param", type=str, default='density')
     parser.add_argument("--experiments-dir", type=str, default=EXPERIMENTS_DIR)
     parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint file. Defaults to <experiments-dir>/<param>/checkpoints/model_64_30.pt")
+                        help="Path to checkpoint file. Defaults to the resolved "
+                             "parameter artifact directory under --experiments-dir.")
     parser.add_argument("--rollout-steps", type=int, default=1,
                         help="Number of autoregressive 20-frame prediction steps (default: 1 = teacher-forced)")
     opt = parser.parse_args()
 
-    exp_dir = opt.experiments_dir
-    vis_dir = os.path.join(exp_dir, opt.param, 'visualizations')
-    os.makedirs(vis_dir, exist_ok=True)
+    paths = resolve_experiment_param(
+        opt.experiments_dir, opt.param, DATA_DIR, create=True,
+    )
+    ensure_param_layout(paths)
+    exp_dir = paths.exp_dir
+    vis_dir = paths.prediction_dir
+    data_param = paths.data_param
+    write_manifest(
+        paths,
+        metadata={
+            'cli': {
+                'experiments_dir': str(exp_dir),
+                'param': opt.param,
+            },
+            'data': {
+                'param': data_param,
+            },
+            'inference': {
+                'rollout_steps': opt.rollout_steps,
+            },
+        },
+    )
 
     checkpoint_path = opt.checkpoint
     if checkpoint_path is None:
-        best_pt = os.path.join(
-            exp_dir, opt.param, 'checkpoints', 'model_best.pt'
-        )
-        default_pt = os.path.join(
-            exp_dir, opt.param, 'checkpoints', 'model_64_30.pt'
-        )
+        best_pt = str(paths.best_model_path)
+        default_pt = str(paths.model_path)
         checkpoint_path = best_pt if os.path.exists(best_pt) else default_pt
 
     print(f"Processing parameter: {opt.param}")
+    if data_param != opt.param:
+        print(f"Resolved data parameter: {data_param}")
+    print(f"Experiment layout: {paths.layout}")
 
     model = FNO3d(64, 64, 5, 30).cuda()
     model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
     model.eval()
 
-    test_dir = Path(DATA_DIR) / opt.param / 'test'
+    test_dir = Path(DATA_DIR) / data_param / 'test'
     test_files = sorted(test_dir.glob("x_sim_*.npy"))
     n_test = len(test_files)
 
@@ -146,11 +171,14 @@ def main():
                 y = np.load(y_path)
                 out = ((out + 1)/2)*(np.max(y) - np.min(y)) + np.min(y)
 
-                np.save(os.path.join(vis_dir, f'pred_sim_{sim_id}.npy'), out)
+                np.save(prediction_file(paths, sim_id), out)
             else:
                 # Autoregressive rollout
                 out = run_rollout(model, x, y_path, opt.rollout_steps)
-                np.save(os.path.join(vis_dir, f'pred_sim_{sim_id}_rollout.npy'), out)
+                np.save(
+                    prediction_file(paths, sim_id, is_rollout=True),
+                    out,
+                )
 
     t2 = default_timer()
 

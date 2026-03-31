@@ -51,6 +51,12 @@ from tqdm import tqdm
 from pathlib import Path
 import os
 
+from experiment_layout import (
+    prediction_file,
+    prediction_files,
+    resolve_experiment_param,
+)
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR   = os.path.dirname(SCRIPT_DIR)
 DATA_DIR        = os.path.join(ROOT_DIR, 'data')
@@ -277,13 +283,14 @@ def _build_magnetic_dissipation_data(
     ref_curve = compute_magnetic_dissipation(ref_bx, ref_by, mu, param)
     ref_x, xlabel = _frames_to_plot_x(param, ref_frames)
 
-    pred_suffix = '_rollout' if is_rollout else ''
     pred_components = {}
     missing_pred = []
     for field, magnetic_param in magnetic_params.items():
-        pred_path = (
-            Path(exp_dir) / magnetic_param / 'visualizations' /
-            f"pred_sim_{sim_id}{pred_suffix}.npy"
+        magnetic_paths = resolve_experiment_param(
+            exp_dir, magnetic_param, DATA_DIR,
+        )
+        pred_path = prediction_file(
+            magnetic_paths, sim_id, is_rollout=is_rollout,
         )
         pred_traj = _load_optional_prediction_trajectory(pred_path, is_rollout)
         if pred_traj is None:
@@ -916,13 +923,15 @@ def main():
     opt = parser.parse_args()
 
     exp_dir = Path(opt.experiments_dir)
-    vis_dir = exp_dir / opt.param / 'visualizations'
-    test_dir = Path(DATA_DIR) / opt.param / 'test'
+    paths = resolve_experiment_param(exp_dir, opt.param, DATA_DIR)
+    vis_dir = paths.render_dir
+    vis_dir.mkdir(parents=True, exist_ok=True)
+    test_dir = Path(DATA_DIR) / paths.data_param / 'test'
 
-    all_pred_files = sorted(vis_dir.glob("pred_sim_*.npy"))
+    all_pred_files = prediction_files(paths)
     if not all_pred_files:
         raise FileNotFoundError(
-            f"No pred_sim_*.npy files found in {vis_dir}. "
+            f"No pred_sim_*.npy files found in {paths.prediction_dir}. "
             "Run inference.py first."
         )
 
@@ -937,7 +946,11 @@ def main():
             tf_files.append((p, sim_id))
 
     print(f"Processing parameter: {opt.param}")
-    print(f"Predictions directory: {vis_dir}")
+    if paths.data_param != opt.param:
+        print(f"Resolved data parameter: {paths.data_param}")
+    print(f"Experiment layout: {paths.layout}")
+    print(f"Predictions directory: {paths.prediction_dir}")
+    print(f"Render directory: {vis_dir}")
     print(f"Ground truth directory: {test_dir}")
     print(f"Found {len(tf_files)} teacher-forced file(s), "
           f"{len(rollout_files)} rollout file(s)")
@@ -953,7 +966,7 @@ def main():
     for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced",
                                   unit="file"):
         n, s = visualize_teacher_forced(
-            pred_path, sim_id, exp_dir, test_dir, vis_dir, opt.param,
+            pred_path, sim_id, exp_dir, test_dir, vis_dir, paths.data_param,
             opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
         )
@@ -963,7 +976,7 @@ def main():
     # --- rollout ---
     for pred_path, sim_id in tqdm(rollout_files, desc="Rollout", unit="file"):
         n, s = visualize_rollout(
-            pred_path, sim_id, exp_dir, test_dir, vis_dir, opt.param,
+            pred_path, sim_id, exp_dir, test_dir, vis_dir, paths.data_param,
             opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
         )

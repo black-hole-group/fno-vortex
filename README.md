@@ -70,7 +70,8 @@ Output: (batch, 128, 128, 10, 1) → next 10 timesteps
 
 ```bash
 cd src
-python train.py --param <parameter_name> [--fast] [--patience N]
+python train.py --param <parameter_name> \
+  [--experiments-dir <path>] [--fast] [--patience N]
 ```
 
 **Available parameters (Idefix dataset):**
@@ -88,6 +89,40 @@ cd src
 python train.py --param density
 ```
 
+To create a cleaner run-scoped experiment directory, point
+`--experiments-dir` at a dedicated run root:
+
+```bash
+cd src
+python train.py \
+  --experiments-dir ../experiments/64_30_autoreg--2026-31-03 \
+  --param by
+```
+
+When `--experiments-dir` targets a dedicated run directory, new artifacts are
+stored in a flatter layout such as:
+
+```text
+experiments/<run>/
+  manifest.json
+  params/
+    by/
+      model_best.pt
+      model_64_30.pt
+      training_state.pt
+      loss_64_30.npy
+      train.log
+      pred_sim_000.npy
+      pred_sim_000_rollout.npy
+      renders/
+        ...
+  vector/
+    magnetic/
+    velocity/
+```
+
+Existing legacy experiment trees remain supported.
+
 Use `--fast` for a short smoke test that trains on a tiny subset of the data and saves a validation image every epoch.
 
 **Training configuration:**
@@ -99,9 +134,9 @@ Use `--fast` for a short smoke test that trains on a tiny subset of the data and
 - Loss: MAE (L1) on normalized targets
 
 **Output** (paths are relative to project root):
-- Model checkpoint: `experiments/<param>/checkpoints/model_64_30.pt`
-- Loss history: `experiments/<param>/checkpoints/loss_64_30.npy` (per-epoch columns for train and validation MAE)
-- Validation images: `experiments/<param>/visualizations/` (one per epoch)
+- Legacy default root: `experiments/<param>/checkpoints/` and `experiments/<param>/visualizations/`
+- Dedicated run root: `experiments/<run>/params/<param>/`
+- Validation images for run-scoped layouts: `experiments/<run>/params/<param>/renders/`
 
 Checkpoints created before the MAE-only refactor are not compatible with `--resume`; start a fresh run instead of resuming an older `training_state.pt`.
 
@@ -109,7 +144,7 @@ Checkpoints created before the MAE-only refactor are not compatible with `--resu
 
 ```bash
 cd src
-python inference.py --param <parameter_name>
+python inference.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
 Processes 21 test samples and saves denormalized predictions as `.npy` arrays.
@@ -119,6 +154,33 @@ Processes 21 test samples and saves denormalized predictions as `.npy` arrays.
 cd src
 python inference.py --param density
 ```
+
+For a run-scoped experiment, you can use a short leaf parameter:
+
+```bash
+cd src
+python inference.py \
+  --experiments-dir ../experiments/64_30_autoreg--2026-31-03 \
+  --param by
+```
+
+### Visualization
+
+After inference, render scalar or vector diagnostics from the same run root:
+
+```bash
+cd src
+python viz_scalar.py \
+  --experiments-dir ../experiments/64_30_autoreg--2026-31-03 \
+  --param by
+
+python viz_vector.py \
+  --experiments-dir ../experiments/64_30_autoreg--2026-31-03 \
+  --param bx
+```
+
+Legacy nested experiment layouts are still supported. For those runs you can
+continue passing the full nested parameter path when needed.
 
 ---
 **NOTE ABOUT FORECASTING**  
@@ -208,10 +270,12 @@ fno/
 │   ├── architecture.py      # FNO3d and SpectralConv3d definitions (used by inference.py)
 │   ├── train.py             # Main training script (also defines FNO3d inline)
 │   ├── inference.py         # Inference script
+│   ├── viz_scalar.py        # Scalar prediction rendering
+│   ├── viz_vector.py        # Vector prediction rendering
 │   ├── utilities.py         # Loss functions: LpLoss, HsLoss, FrequencyLoss
 │   ├── Adam.py              # Custom Adam optimizer
-│   └── visualize_results.py # Result visualization utilities
-└── experiments/             # Model checkpoints and visualizations
+│   └── experiment_layout.py # Shared legacy/run-scoped path resolver
+└── experiments/             # Legacy and run-scoped experiment artifacts
 ```
 
 ## References

@@ -31,7 +31,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from visualize_results import (
+from experiment_layout import (
+    resolve_experiment_param,
+    resolve_vector_output_dir,
+)
+from viz_scalar import (
     DATA_DIR,
     EXPERIMENTS_DIR,
     N_INPUT_FRAMES,
@@ -79,9 +83,10 @@ LEAF_TO_FAMILY = {
 }
 
 
-def _resolve_vector_spec(param):
+def _resolve_vector_spec(exp_dir, param):
     """Resolve the vector family and companion component paths."""
-    leaf = Path(param).name
+    param_paths = resolve_experiment_param(exp_dir, param, DATA_DIR)
+    leaf = param_paths.param_key
     family = LEAF_TO_FAMILY.get(leaf)
     if family is None:
         supported = ', '.join(sorted(LEAF_TO_FAMILY))
@@ -92,20 +97,27 @@ def _resolve_vector_spec(param):
 
     spec = dict(VECTOR_FAMILIES[family])
     spec['family'] = family
-    spec['param'] = param
-    spec['component_params'] = {
-        component: _replace_param_leaf(param, component)
-        for component in spec['components']
-    }
+    spec['param'] = param_paths.data_param
+    spec['param_key'] = param_paths.param_key
+    spec['paths'] = param_paths
+    spec['component_params'] = {}
+    spec['component_paths'] = {}
+    for component in spec['components']:
+        component_paths = resolve_experiment_param(
+            exp_dir,
+            _replace_param_leaf(param_paths.data_param, component),
+            DATA_DIR,
+        )
+        spec['component_params'][component] = component_paths.data_param
+        spec['component_paths'][component] = component_paths
     return spec
 
 
 def _vector_output_dir(exp_dir, spec):
     """Return the shared visualization directory for this vector family."""
-    parent = Path(spec['param']).parent
-    if str(parent) == '.':
-        return Path(exp_dir) / spec['output_dirname']
-    return Path(exp_dir) / parent / spec['output_dirname']
+    return resolve_vector_output_dir(
+        exp_dir, spec['family'], data_param=spec['param'],
+    )
 
 
 def _prediction_map(vis_dir):
@@ -123,10 +135,10 @@ def _collect_prediction_pairs(exp_dir, spec):
     """Return paired prediction files shared by both vector components."""
     component_maps = {}
     component_dirs = {}
-    for component, component_param in spec['component_params'].items():
-        vis_dir = Path(exp_dir) / component_param / 'visualizations'
-        component_dirs[component] = vis_dir
-        component_maps[component] = _prediction_map(vis_dir)
+    for component, component_paths in spec['component_paths'].items():
+        pred_dir = component_paths.prediction_dir
+        component_dirs[component] = pred_dir
+        component_maps[component] = _prediction_map(pred_dir)
 
     shared_keys = sorted(
         set.intersection(*(set(mapping) for mapping in component_maps.values()))
@@ -810,7 +822,7 @@ def main():
         '--param',
         type=str,
         required=True,
-        help='One vector component path, e.g. idefix/numpy/t20/bx or vx.',
+        help='One vector component leaf or path, e.g. bx or idefix/numpy/t20/bx.',
     )
     parser.add_argument(
         '--experiments-dir',
@@ -850,7 +862,7 @@ def main():
     if opt.max_frames is not None and opt.max_frames <= 0:
         raise ValueError('--max-frames must be a positive integer.')
 
-    spec = _resolve_vector_spec(opt.param)
+    spec = _resolve_vector_spec(opt.experiments_dir, opt.param)
     exp_dir = Path(opt.experiments_dir)
     vis_dir = _vector_output_dir(exp_dir, spec)
     vis_dir.mkdir(parents=True, exist_ok=True)
@@ -860,6 +872,9 @@ def main():
     )
 
     print(f"Processing vector family: {spec['family']}")
+    if spec['param'] != opt.param:
+        print(f"Resolved data parameter: {spec['param']}")
+    print(f"Experiment layout: {spec['paths'].layout}")
     print(
         'Component prediction directories: '
         + ', '.join(

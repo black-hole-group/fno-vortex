@@ -15,6 +15,11 @@ from datetime import datetime
 import asciichartpy
 
 from architecture import FNO3d
+from experiment_layout import (
+    ensure_param_layout,
+    resolve_experiment_param,
+    write_manifest,
+)
 torch.manual_seed(0)
 np.random.seed(0)
 
@@ -114,12 +119,19 @@ def main():
     if opt.batch_size <= 0:
         parser.error("--batch-size must be positive")
 
-    exp_dir = opt.experiments_dir
-    os.makedirs(os.path.join(exp_dir, opt.param, 'checkpoints'), exist_ok=True)
-    os.makedirs(os.path.join(exp_dir, opt.param, 'visualizations'), exist_ok=True)
+    paths = resolve_experiment_param(
+        opt.experiments_dir, opt.param, DATA_DIR, create=True,
+    )
+    ensure_param_layout(paths)
+    exp_dir = paths.exp_dir
+    data_param = paths.data_param
 
-    n_train_available = len(list((Path(DATA_DIR) / opt.param / 'train').glob('x_sim_*.npy')))
-    n_val_available = len(list((Path(DATA_DIR) / opt.param / 'val').glob('x_sim_*.npy')))
+    n_train_available = len(
+        list((Path(DATA_DIR) / data_param / 'train').glob('x_sim_*.npy'))
+    )
+    n_val_available = len(
+        list((Path(DATA_DIR) / data_param / 'val').glob('x_sim_*.npy'))
+    )
 
     learning_rate = 0.001
     scheduler_step = 500
@@ -165,13 +177,13 @@ def main():
         f"Loading {n_train_available} train + {n_val_available} val files into memory..."
     )
     train_cache = load_dataset(
-        opt.param,
+        data_param,
         'train',
         max_files=train_files_limit,
         max_samples=samples_per_file,
     )
     val_cache = load_dataset(
-        opt.param,
+        data_param,
         'val',
         max_files=val_files_limit,
         max_samples=samples_per_file,
@@ -199,6 +211,10 @@ def main():
     print(f"  Epochs: {epochs}  |  Batch size: {batch_size}  |  LR: {learning_rate}")
     print(f"  Scheduler: StepLR(step={scheduler_step}, gamma={scheduler_gamma})")
     print(f"  Param: {opt.param}")
+    if data_param != opt.param:
+        print(f"  Data param: {data_param}")
+    print(f"  Experiment layout: {paths.layout}")
+    print(f"  Artifact dir: {paths.param_dir}")
     if opt.fast:
         print(
             "  Fast mode: enabled "
@@ -211,11 +227,35 @@ def main():
         print("  Mixed precision: disabled (complex parameters require unsupported AMP unscale)")
     print(f"{'='*55}\n")
 
-    log_path = os.path.join(exp_dir, opt.param, 'checkpoints', 'train.log')
-    checkpoint_dir = os.path.join(exp_dir, opt.param, 'checkpoints')
-    model_path = os.path.join(checkpoint_dir, 'model_64_30.pt')
-    training_state_path = os.path.join(checkpoint_dir, 'training_state.pt')
-    loss_path = os.path.join(checkpoint_dir, 'loss_64_30.npy')
+    write_manifest(
+        paths,
+        metadata={
+            'cli': {
+                'experiments_dir': str(exp_dir),
+                'param': opt.param,
+            },
+            'data': {
+                'param': data_param,
+            },
+            'model': {
+                'modes_x': 64,
+                'modes_y': 64,
+                'modes_t': 5,
+                'width': 30,
+            },
+            'training': {
+                'batch_size': batch_size,
+                'fast': opt.fast,
+                'patience': opt.patience,
+            },
+        },
+    )
+
+    log_path = str(paths.log_path)
+    checkpoint_dir = str(paths.checkpoint_dir)
+    model_path = str(paths.model_path)
+    training_state_path = str(paths.training_state_path)
+    loss_path = str(paths.loss_path)
 
     loss_history = {name: [] for name in LOSS_HISTORY_COLUMNS}
     log10_mae_history = []
@@ -223,7 +263,7 @@ def main():
     best_val_mae = float('inf')
     best_epoch = 0
     epochs_no_improve = 0
-    best_model_path = os.path.join(checkpoint_dir, 'model_best.pt')
+    best_model_path = str(paths.best_model_path)
 
     def save_loss_history():
         if not loss_history['train_mae']:
@@ -285,6 +325,10 @@ def main():
         log.write(f"\n{'='*70}\n")
         log.write(f"  Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         log.write(f"  Param: {opt.param}\n")
+        if data_param != opt.param:
+            log.write(f"  Data param: {data_param}\n")
+        log.write(f"  Experiment layout: {paths.layout}\n")
+        log.write(f"  Artifact dir: {paths.param_dir}\n")
         log.write(f"  Resume: {opt.resume}\n")
         log.write(f"  FNO3d(modes=64/64/5, width=30)  |  Parameters: {n_params:,}\n")
         log.write(f"  Input shape: {tuple(x0_shape)}  |  Output shape: {tuple(y0_shape)}\n")
@@ -422,7 +466,7 @@ def main():
                         fig.colorbar(cm, cax=cax, orientation='horizontal')
                         cax.set_xlabel(label)
 
-                    plt.savefig(os.path.join(exp_dir, opt.param, 'visualizations', str(vis_idx).zfill(4) + '.png'))
+                    plt.savefig(paths.render_dir / f'{vis_idx:04d}.png')
                     plt.close(fig)
                     vis_idx += 1
 
