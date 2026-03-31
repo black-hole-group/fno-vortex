@@ -1,15 +1,9 @@
 """
 FNO Result Visualization Script
 
-Supports both teacher-forced and autoregressive rollout predictions produced
-by inference.py.
+Visualizes autoregressive predictions produced by inference.py.
 
-Teacher-forced (pred_sim_<id>.npy):
-  Shape (20, 128, 128, T_out) — 20 sliding-window samples.
-  For each sample s and output step t, absolute frame = 5 + s + t.
-  Renders: reference | prediction | error
-
-Autoregressive rollout (pred_sim_<id>_rollout.npy):
+Prediction files (pred_sim_<id>.npy):
   Shape (1, 128, 128, 20*N) — single long trajectory from sample 0.
   Absolute frame index i maps to frame 5 + i.
 
@@ -27,7 +21,7 @@ Usage:
         [--workers N]
 
 Run inference.py first to produce pred_sim_*.npy files.
-For full-horizon rollout reference, run prepare_reference.py first.
+For full-horizon reference, run prepare_reference.py first.
 
 For Idefix-derived data, frame titles also show time in Alfvén units. The
 conversion is derived from the fixed Idefix box size, initial density,
@@ -135,27 +129,6 @@ def _curve_ylim(curves, pad_frac=0.08):
     return lower, upper
 
 
-def _collapse_windowed_trajectory(windowed):
-    """Collapse overlapping teacher-forced windows to one absolute timeline.
-
-    The chosen policy keeps the shortest-horizon prediction for each absolute
-    frame, which means lower output-step offsets take priority.
-    """
-    selected = {}
-    n_samples = windowed.shape[0]
-    t_out = windowed.shape[3]
-
-    for lead in range(t_out):
-        for sample in range(n_samples):
-            frame = N_INPUT_FRAMES + sample + lead
-            if frame not in selected:
-                selected[frame] = windowed[sample, :, :, lead]
-
-    frames = np.array(sorted(selected), dtype=np.int64)
-    traj = np.stack([selected[frame] for frame in frames], axis=0)
-    return frames, traj
-
-
 def _rollout_prediction_trajectory(pred):
     """Return absolute frames and trajectory from a rollout prediction array."""
     frames = np.arange(
@@ -228,19 +201,22 @@ def _load_mu(test_dir, sim_id):
     return float(x[0, 0, 0, 0, -1])
 
 
-def _load_optional_prediction_trajectory(pred_path, is_rollout):
-    """Load a magnetic prediction trajectory when the file exists."""
+def _load_optional_prediction_trajectory(pred_path):
+    """Load a rollout prediction trajectory when the file exists."""
     if not pred_path.exists():
         return None
 
     pred = np.load(pred_path)
-    if is_rollout:
-        return _rollout_prediction_trajectory(pred[0])
-    return _collapse_windowed_trajectory(pred.squeeze(-1))
+    if pred.ndim != 4 or pred.shape[0] != 1:
+        raise ValueError(
+            f'Expected rollout prediction with shape (1, H, W, T), got '
+            f'{pred.shape} for {pred_path}.'
+        )
+    return _rollout_prediction_trajectory(pred[0])
 
 
 def _build_magnetic_dissipation_data(
-    exp_dir, param, sim_id, test_dir, is_rollout, rollout_n_frames=None
+    exp_dir, param, sim_id, test_dir, rollout_n_frames
 ):
     """Build precomputed epsilon_M data for one simulation."""
     mu = _load_mu(test_dir, sim_id)
@@ -251,9 +227,6 @@ def _build_magnetic_dissipation_data(
         for field in ('bx', 'by')
     }
 
-    if is_rollout and rollout_n_frames is None:
-        raise ValueError("rollout_n_frames is required for rollout epsilon_M.")
-
     ref_components = {}
     for field, field_paths in magnetic_paths.items():
         field_test_dir = Path(DATA_DIR) / field_paths.data_param / 'test'
@@ -262,22 +235,9 @@ def _build_magnetic_dissipation_data(
             sim_id,
             preferred_ref_path=reference_file(field_paths, sim_id),
         )
-        if is_rollout:
-            ref_components[field] = _rollout_reference_trajectory(
-                ref, dense, rollout_n_frames
-            )
-        else:
-            if dense:
-                # Dense ref_sim covers the full simulation timeline — use it
-                # so epsilon_M spans all available frames, not just y windows.
-                n_ref = ref.shape[0]
-                frames = np.arange(n_ref, dtype=np.int64)
-                traj = ref          # (N_frames, H, W)
-                ref_components[field] = (frames, traj)
-            else:
-                # Fall back to supervised windows when no dense file exists.
-                y = np.load(field_test_dir / f"y_sim_{sim_id}.npy")
-                ref_components[field] = _collapse_windowed_trajectory(y)
+        ref_components[field] = _rollout_reference_trajectory(
+            ref, dense, rollout_n_frames
+        )
 
     ref_frames, ref_bx, ref_by = _align_trajectories(
         ref_components['bx'][0],
@@ -291,10 +251,8 @@ def _build_magnetic_dissipation_data(
     pred_components = {}
     missing_pred = []
     for field, field_paths in magnetic_paths.items():
-        pred_path = prediction_file(
-            field_paths, sim_id, is_rollout=is_rollout,
-        )
-        pred_traj = _load_optional_prediction_trajectory(pred_path, is_rollout)
+        pred_path = prediction_file(field_paths, sim_id)
+        pred_traj = _load_optional_prediction_trajectory(pred_path)
         if pred_traj is None:
             missing_pred.append(field)
         else:
@@ -477,17 +435,23 @@ def _plot_magnetic_dissipation(ax, frame, dissipation):
 
 
 def parse_pred_file(path):
-    """Return (sim_id, is_rollout) from a pred_sim_*.npy filename.
+    """Return the simulation id from a rollout pred_sim_*.npy filename.
 
-    Examples:
-        pred_sim_042.npy        → ('042', False)
-        pred_sim_042_rollout.npy → ('042', True)
+    Legacy `_rollout` suffixed files are no longer supported by the active
+    visualization pipeline.
     """
-    stem = path.stem  # strip .npy
-    without_prefix = stem[len('pred_sim_'):]
-    if without_prefix.endswith('_rollout'):
-        return without_prefix[:-len('_rollout')], True
-    return without_prefix, False
+    stem = path.stem
+    if not stem.startswith('pred_sim_'):
+        raise ValueError(f'Unrecognized prediction filename: {path.name}')
+
+    sim_id = stem[len('pred_sim_'):]
+    if sim_id.endswith('_rollout'):
+        raise ValueError(
+            f'Legacy rollout filename no longer supported: {path.name}'
+        )
+    if not sim_id:
+        raise ValueError(f'Could not parse simulation id from {path.name}')
+    return sim_id
 
 
 def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
@@ -545,7 +509,7 @@ def _save_frame_with_gt(vis_dir, fname, param, sim_id, frame,
 def _save_frame_pred_only(vis_dir, fname, param, sim_id, frame,
                           pred_t, vmin, vmax, suffix='', spec_ylim=None,
                           dissipation=None):
-    """Render a two-row PNG for prediction-only rollout frames.
+    """Render a two-row PNG for prediction-only frames.
 
     Row 0: blank | prediction | blank  (same column widths as _save_frame_with_gt)
     Row 1: prediction power spectrum spanning first two columns
@@ -675,75 +639,10 @@ def _load_rollout_reference(test_dir, sim_id, preferred_ref_path=None):
     return y[0], False             # (H, W, T_out)
 
 
-def visualize_teacher_forced(pred_path, sim_id, exp_dir, test_dir, vis_dir,
-                             param, force, max_frames=None,
-                             workers=None):
-    """Visualize a teacher-forced prediction file.
-
-    pred shape: (n_samples, 128, 128, T_out)
-    y    shape: (n_samples, 128, 128, T_out)
-    """
-    pred = np.load(pred_path).squeeze(-1)
-    y    = np.load(test_dir / f"y_sim_{sim_id}.npy")
-
-    vmin_global = float(min(pred.min(), y.min()))
-    vmax_global = float(max(pred.max(), y.max()))
-    eabs_global = float(np.max(np.abs(y - pred)))
-
-    # Precompute power spectra across all frames to get a stable y-axis range
-    # for the spectrum subplot — avoids jumpy limits in the rendered movie.
-    all_spectra = []
-    for s in range(pred.shape[0]):
-        for t in range(pred.shape[3]):
-            _, P_y = compute_power_spectrum(y[s, :, :, t])
-            _, P_p = compute_power_spectrum(pred[s, :, :, t])
-            all_spectra.extend([P_y, P_p])
-    spec_ylim_global = _spectrum_ylim(all_spectra)
-    dissipation = _build_magnetic_dissipation_data(
-        exp_dir, param, sim_id, test_dir, is_rollout=False,
-    )
-
-    jobs = []
-    skipped = 0
-    n_samples = pred.shape[0]
-
-    for s in range(n_samples):
-        if max_frames is not None and len(jobs) + skipped >= max_frames:
-            break
-        for t in range(pred.shape[3]):
-            if max_frames is not None and len(jobs) + skipped >= max_frames:
-                break
-            frame = N_INPUT_FRAMES + s + t
-            fname = f'frame_{frame:04d}_sim_{sim_id}.png'
-            if (vis_dir / fname).exists() and not force:
-                skipped += 1
-                continue
-            jobs.append({
-                'vis_dir': str(vis_dir),
-                'fname': fname,
-                'param': param,
-                'sim_id': sim_id,
-                'frame': frame,
-                'target': y[s, :, :, t].copy(),
-                'pred_t': pred[s, :, :, t].copy(),
-                'vmin': vmin_global,
-                'vmax': vmax_global,
-                'eabs': eabs_global,
-                'suffix': '',
-                'spec_ylim': spec_ylim_global,
-                'dissipation': dissipation,
-            })
-
-    total = _run_jobs(
-        jobs, desc=f"  sim {sim_id}", workers=workers,
-    )
-    return total, skipped
-
-
-def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
-                      force, max_frames=None, workers=None,
-                      preferred_ref_path=None):
-    """Visualize an autoregressive rollout prediction file.
+def visualize_prediction(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
+                         force, max_frames=None, workers=None,
+                         preferred_ref_path=None):
+    """Visualize an autoregressive prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
 
@@ -760,8 +659,7 @@ def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
     pred = pred[0]                     # (128, 128, 20*N)
     n_frames = pred.shape[2]
     dissipation = _build_magnetic_dissipation_data(
-        exp_dir, param, sim_id, test_dir, is_rollout=True,
-        rollout_n_frames=n_frames,
+        exp_dir, param, sim_id, test_dir, rollout_n_frames=n_frames,
     )
 
     ref, dense = _load_rollout_reference(
@@ -830,7 +728,7 @@ def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
 
     for i in range(frame_limit):
         frame = N_INPUT_FRAMES + i
-        fname = f'frame_{frame:04d}_sim_{sim_id}_rollout.png'
+        fname = f'frame_{frame:04d}_sim_{sim_id}.png'
 
         if (vis_dir / fname).exists() and not force:
             skipped += 1
@@ -857,7 +755,7 @@ def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
                 'vmin': vmin_global,
                 'vmax': vmax_global,
                 'eabs': eabs_global,
-                'suffix': 'rollout',
+                'suffix': '',
                 'spec_ylim': spec_ylim_global,
                 'dissipation': dissipation,
             })
@@ -873,13 +771,13 @@ def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
                 'vmin': vmin_global,
                 'vmax': vmax_global,
                 'eabs': 0.0,
-                'suffix': 'rollout',
+                'suffix': '',
                 'spec_ylim': spec_ylim_global,
                 'dissipation': dissipation,
             })
 
     total = _run_jobs(
-        jobs, desc=f"  sim {sim_id} rollout", workers=workers,
+        jobs, desc=f"  sim {sim_id}", workers=workers,
     )
     return total, skipped
 
@@ -948,15 +846,7 @@ def main():
             "Run inference.py first."
         )
 
-    # Separate teacher-forced from rollout files
-    tf_files = []
-    rollout_files = []
-    for p in all_pred_files:
-        sim_id, is_rollout = parse_pred_file(p)
-        if is_rollout:
-            rollout_files.append((p, sim_id))
-        else:
-            tf_files.append((p, sim_id))
+    pred_files = [(p, parse_pred_file(p)) for p in all_pred_files]
 
     print(f"Processing parameter: {opt.param}")
     if paths.data_param != opt.param:
@@ -965,8 +855,7 @@ def main():
     print(f"Predictions directory: {paths.prediction_dir}")
     print(f"Render directory: {vis_dir}")
     print(f"Ground truth directory: {test_dir}")
-    print(f"Found {len(tf_files)} teacher-forced file(s), "
-          f"{len(rollout_files)} rollout file(s)")
+    print(f"Found {len(pred_files)} prediction file(s)")
     if opt.workers and opt.workers > 1:
         print(f"Parallel rendering: {opt.workers} worker processes")
     else:
@@ -975,20 +864,8 @@ def main():
     total_pngs = 0
     skipped_pngs = 0
 
-    # --- teacher-forced ---
-    for pred_path, sim_id in tqdm(tf_files, desc="Teacher-forced",
-                                  unit="file"):
-        n, s = visualize_teacher_forced(
-            pred_path, sim_id, exp_dir, test_dir, vis_dir, paths.data_param,
-            opt.force,
-            max_frames=opt.max_frames, workers=opt.workers,
-        )
-        total_pngs += n
-        skipped_pngs += s
-
-    # --- rollout ---
-    for pred_path, sim_id in tqdm(rollout_files, desc="Rollout", unit="file"):
-        n, s = visualize_rollout(
+    for pred_path, sim_id in tqdm(pred_files, desc="Predictions", unit="file"):
+        n, s = visualize_prediction(
             pred_path, sim_id, exp_dir, test_dir, vis_dir, paths.data_param,
             opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
@@ -1002,18 +879,11 @@ def main():
 
     # --- movies ---
     print("\nRendering movies...")
-    for _, sim_id in tf_files:
+    for _, sim_id in pred_files:
         render_movie(
             vis_dir,
             png_glob=f'frame_*_sim_{sim_id}.png',
             movie_name=f'movie_sim_{sim_id}.mp4',
-            force=opt.force,
-        )
-    for _, sim_id in rollout_files:
-        render_movie(
-            vis_dir,
-            png_glob=f'frame_*_sim_{sim_id}_rollout.png',
-            movie_name=f'movie_sim_{sim_id}_rollout.mp4',
             force=opt.force,
         )
 

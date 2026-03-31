@@ -113,10 +113,7 @@ experiments/<run>/
       loss_64_30.npy
       train.log
       predictions/
-        teacher_forced/
-          pred_sim_000.npy
-        rollout/
-          pred_sim_000_rollout.npy
+        pred_sim_000.npy
       renders/
         ...
   references/
@@ -145,7 +142,7 @@ Use `--fast` for a short smoke test that trains on a tiny subset of the data and
 **Output** (paths are relative to project root):
 - Legacy default root: `experiments/<param>/checkpoints/` and `experiments/<param>/visualizations/`
 - Dedicated run root: `experiments/<run>/params/<param>/`
-- Run-scoped prediction outputs: `experiments/<run>/params/<param>/predictions/teacher_forced/` and `.../predictions/rollout/`
+- Run-scoped prediction outputs: `experiments/<run>/params/<param>/predictions/`
 - Optional run-scoped dense references: `experiments/<run>/references/test/<param>/`
 - Validation/render images for run-scoped layouts: `experiments/<run>/params/<param>/renders/`
 
@@ -155,7 +152,7 @@ Checkpoints created before the MAE-only refactor are not compatible with `--resu
 
 ```bash
 cd src
-python inference.py --param <parameter_name> [--experiments-dir <path>]
+python inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
 ```
 
 Processes all discovered test samples and saves denormalized predictions as
@@ -176,9 +173,10 @@ python inference.py \
   --param by
 ```
 
-Teacher-forced predictions are written under
-`params/<param>/predictions/teacher_forced/`. Autoregressive outputs are written
-under `params/<param>/predictions/rollout/`.
+Autoregressive predictions are written under
+`params/<param>/predictions/pred_sim_<id>.npy`. `--rollout-steps N` keeps
+rolling the model forward for `N` chained 20-frame steps, so each saved array
+has shape `(1, 128, 128, 20*N)`.
 
 To prepare dense rollout references inside the same run root instead of writing
 them back into `data/<param>/test/`, use:
@@ -206,8 +204,8 @@ python viz_vector.py \
 ```
 
 `viz_vector.py` requires paired predictions for both vector components under the
-same run root and in the same mode. For example, magnetic plots need matching
-`bx` and `by` files for the same `sim_id`, both teacher-forced or both rollout.
+same run root. For example, magnetic plots need matching `bx` and `by` files
+for the same `sim_id`.
 
 This is the recommended way to organize a unified magnetic-field evaluation
 bundle: keep the raw `x_sim_*.npy` / `y_sim_*.npy` inputs in `data/`, but point
@@ -219,7 +217,10 @@ continue passing the full nested parameter path when needed.
 
 ---
 **NOTE ABOUT FORECASTING**  
-At inference time the model receives ground-truth simulation frames as input for every window; *its own predictions are never fed back in* (teacher-forced mode, the default). This means reported metrics reflect teacher-forced performance, which is typically much better than free-running (autoregressive) inference where prediction errors accumulate over time.
+Inference is now rollout-only: after the initial prediction window, the model
+feeds its own last 5 predicted frames back in as the next input state. This is
+closer to real deployment, but prediction errors accumulate over time, so
+longer rollouts are harder than one-step forecasts.
 
 **The `test` split is reserved for final inference only.** Training validates against the separate `val` split so that `test` remains an unbiased final evaluation set.
 

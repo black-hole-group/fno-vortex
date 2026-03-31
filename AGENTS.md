@@ -45,7 +45,7 @@ python src/inference.py --param <parameter_name> [--experiments-dir <path>] [--r
   - **Legacy layout:** loads from `experiments/<param>/checkpoints/`
   - **Run-scoped layout:** loads from `experiments/<run>/params/<param>/`
 - Runs over all available test files (counted dynamically), saves predictions to the resolved artifact directory as `pred_sim_<id>.npy`
-- `--rollout-steps N` (default 1): teacher-forced mode uses ground-truth inputs for every window. With N>1, autoregressive rollout feeds the last 5 of 20 predicted frames back as input and repeats N times, producing 20×N frames; saved as `pred_sim_<id>_rollout.npy` with shape `(1, 128, 128, 20*N)`.
+- `--rollout-steps N` (default 1): autoregressive rollout feeds the last 5 of 20 predicted frames back as input and repeats N chained times, producing 20×N frames; saved as `pred_sim_<id>.npy` with shape `(1, 128, 128, 20*N)`.
 - Under a run-scoped root, short leaf params like `by` and `bx` are supported; legacy nested experiment trees also remain supported in place
 
 ### Visualization
@@ -167,7 +167,7 @@ Two numerical solvers have been used:
 
 3. **Preprocessing script:** `data/idefix/convert_to_npy.py` handles VTK → `.npy` conversion for Idefix output. For FARGO3D `.dat` files, an equivalent conversion script is not in this repository.
 
-4. **Autoregressive error accumulation:** the `--rollout-steps N` flag in `inference.py` enables free-running rollout, but prediction errors compound at each step. Teacher-forced (`--rollout-steps 1`) always gives better metrics.
+4. **Autoregressive error accumulation:** the `--rollout-steps N` flag in `inference.py` enables free-running rollout, and prediction errors compound at each chained step.
 
 ## Path Conventions
 

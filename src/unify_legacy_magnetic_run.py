@@ -20,8 +20,7 @@ single experiment layout:
           loss_64_30.npy
           train.log
           predictions/
-            teacher_forced/
-            rollout/
+            pred_sim_000.npy
           renders/
         by/
           ...
@@ -29,8 +28,9 @@ single experiment layout:
         magnetic/
 
 This script discovers the legacy `bx` and `by` sources, copies the recognized
-artifacts into the run-scoped destination, and writes a modern manifest via
-`experiment_layout.write_manifest(...)`.
+artifacts into the run-scoped destination, keeps rollout predictions under the
+new flat `predictions/` layout, skips legacy teacher-forced prediction files,
+and writes a modern manifest via `experiment_layout.write_manifest(...)`.
 
 Examples
 --------
@@ -65,8 +65,8 @@ import shutil
 from experiment_layout import (
     ExperimentParamPaths,
     ensure_param_layout,
+    prediction_file,
     prediction_files,
-    prediction_mode_dir,
     reference_dir,
     resolve_experiment_param,
     resolve_vector_output_dir,
@@ -91,8 +91,8 @@ CHECKPOINT_FILE_NAMES = (
 @dataclass(frozen=True)
 class CopyStats:
     checkpoints: int = 0
-    predictions_teacher_forced: int = 0
-    predictions_rollout: int = 0
+    predictions: int = 0
+    skipped_teacher_forced_predictions: int = 0
     references: int = 0
     renders: int = 0
 
@@ -232,12 +232,10 @@ def _parse_prediction_path(path: Path) -> tuple[str, bool]:
 
 
 def _prediction_destination(dest_paths: ExperimentParamPaths, sim_id: str,
-                            is_rollout: bool, *, create: bool) -> Path:
-    suffix = '_rollout' if is_rollout else ''
-    mode_dir = prediction_mode_dir(
-        dest_paths, is_rollout=is_rollout, create=create,
-    )
-    return mode_dir / f'pred_sim_{sim_id}{suffix}.npy'
+                            *, create: bool) -> Path:
+    if create:
+        dest_paths.prediction_dir.mkdir(parents=True, exist_ok=True)
+    return prediction_file(dest_paths, sim_id)
 
 
 def _copy_checkpoints(source_paths, dest_paths, *, force, dry_run) -> int:
@@ -253,13 +251,13 @@ def _copy_checkpoints(source_paths, dest_paths, *, force, dry_run) -> int:
 
 
 def _copy_visualization_tree(source_paths, dest_paths, *, force, dry_run):
-    tf_count = 0
-    rollout_count = 0
+    prediction_count = 0
+    skipped_tf_count = 0
     ref_count = 0
     render_count = 0
 
     if not source_paths.render_dir.exists():
-        return tf_count, rollout_count, ref_count, render_count
+        return prediction_count, skipped_tf_count, ref_count, render_count
 
     for src in sorted(source_paths.render_dir.rglob('*')):
         if not src.is_file():
@@ -268,14 +266,14 @@ def _copy_visualization_tree(source_paths, dest_paths, *, force, dry_run):
         name = src.name
         if name.startswith('pred_sim_') and src.suffix == '.npy':
             sim_id, is_rollout = _parse_prediction_path(src)
+            if not is_rollout:
+                skipped_tf_count += 1
+                continue
             dst = _prediction_destination(
-                dest_paths, sim_id, is_rollout, create=not dry_run,
+                dest_paths, sim_id, create=not dry_run,
             )
             _copy_file(src, dst, force=force, dry_run=dry_run)
-            if is_rollout:
-                rollout_count += 1
-            else:
-                tf_count += 1
+            prediction_count += 1
             continue
 
         if name.startswith('ref_sim_') and src.suffix == '.npy':
@@ -295,7 +293,7 @@ def _copy_visualization_tree(source_paths, dest_paths, *, force, dry_run):
         _copy_file(src, dst, force=force, dry_run=dry_run)
         render_count += 1
 
-    return tf_count, rollout_count, ref_count, render_count
+    return prediction_count, skipped_tf_count, ref_count, render_count
 
 
 def _copy_component(source: LegacyComponentSource, destination: Path,
@@ -318,13 +316,13 @@ def _copy_component(source: LegacyComponentSource, destination: Path,
     checkpoints = _copy_checkpoints(
         source_paths, dest_paths, force=force, dry_run=dry_run,
     )
-    tf_count, rollout_count, ref_count, render_count = _copy_visualization_tree(
+    pred_count, skipped_tf_count, ref_count, render_count = _copy_visualization_tree(
         source_paths, dest_paths, force=force, dry_run=dry_run,
     )
     stats = CopyStats(
         checkpoints=checkpoints,
-        predictions_teacher_forced=tf_count,
-        predictions_rollout=rollout_count,
+        predictions=pred_count,
+        skipped_teacher_forced_predictions=skipped_tf_count,
         references=ref_count,
         renders=render_count,
     )
@@ -356,11 +354,9 @@ def _write_component_manifest(dest_paths, source: LegacyComponentSource,
                         'source_param': source.param,
                         'copied': {
                             'checkpoints': component_stats.checkpoints,
-                            'predictions_teacher_forced': (
-                                component_stats.predictions_teacher_forced
-                            ),
-                            'predictions_rollout': (
-                                component_stats.predictions_rollout
+                            'predictions': component_stats.predictions,
+                            'skipped_teacher_forced_predictions': (
+                                component_stats.skipped_teacher_forced_predictions
                             ),
                             'references': component_stats.references,
                             'renders': component_stats.renders,
@@ -372,12 +368,12 @@ def _write_component_manifest(dest_paths, source: LegacyComponentSource,
     )
 
 
-def _shared_prediction_keys(destination: Path) -> set[tuple[str, bool]]:
+def _shared_prediction_keys(destination: Path) -> set[str]:
     component_keys = []
     for component in MAGNETIC_COMPONENTS:
         paths = resolve_experiment_param(destination, component, DATA_DIR)
         keys = {
-            _parse_prediction_path(path)
+            _parse_prediction_path(path)[0]
             for path in prediction_files(paths)
         }
         component_keys.append(keys)
@@ -395,8 +391,9 @@ def _print_summary(destination: Path,
             f'  {component}: source={component_sources[component].exp_dir}'
             f' ({component_sources[component].param}) | '
             f'checkpoints={stats.checkpoints}, '
-            f'teacher_forced={stats.predictions_teacher_forced}, '
-            f'rollout={stats.predictions_rollout}, '
+            f'predictions={stats.predictions}, '
+            f'skipped_teacher_forced='
+            f'{stats.skipped_teacher_forced_predictions}, '
             f'references={stats.references}, '
             f'renders={stats.renders}'
         )
@@ -405,18 +402,14 @@ def _print_summary(destination: Path,
 
     shared_keys = _shared_prediction_keys(destination)
     if shared_keys:
-        shared_labels = ', '.join(
-            f'{sim_id}{" rollout" if is_rollout else ""}'
-            for sim_id, is_rollout in sorted(shared_keys)
-        )
+        shared_labels = ', '.join(sorted(shared_keys))
         print(f'  shared prediction pairs: {shared_labels}')
         return
 
     print(
         '  warning: no shared bx/by prediction pairs were copied. '
         'The unified run is still valid for future inference, but '
-        '`viz_vector.py` needs matching sim IDs in the same mode for both '
-        'components.'
+        '`viz_vector.py` needs matching sim IDs for both components.'
     )
 
 

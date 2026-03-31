@@ -17,8 +17,6 @@ RUN_VECTOR_DIRNAME = 'vector'
 RUN_PREDICTIONS_DIRNAME = 'predictions'
 RUN_REFERENCES_DIRNAME = 'references'
 RUN_RENDER_DIRNAME = 'renders'
-RUN_TEACHER_FORCED_DIRNAME = 'teacher_forced'
-RUN_ROLLOUT_DIRNAME = 'rollout'
 
 LEGACY_LAYOUT = 'legacy'
 RUN_LAYOUT = 'run'
@@ -129,13 +127,13 @@ def write_manifest(
     now = _timestamp()
     if not manifest:
         manifest = {
-            'layout_version': 2,
-            'layout': 'run-centric-v2',
+            'layout_version': 3,
+            'layout': 'run-centric-v3',
             'created_at': now,
         }
-    elif manifest.get('layout_version', 0) < 2:
-        manifest['layout_version'] = 2
-        manifest['layout'] = 'run-centric-v2'
+    elif manifest.get('layout_version', 0) < 3:
+        manifest['layout_version'] = 3
+        manifest['layout'] = 'run-centric-v3'
 
     manifest['updated_at'] = now
     artifacts = manifest.setdefault('artifacts', {})
@@ -147,14 +145,6 @@ def write_manifest(
             'references_dir': RUN_REFERENCES_DIRNAME,
             'vector_dir': RUN_VECTOR_DIRNAME,
             'render_dirname': RUN_RENDER_DIRNAME,
-            'prediction_modes': {
-                'teacher_forced': str(
-                    Path(RUN_PREDICTIONS_DIRNAME) / RUN_TEACHER_FORCED_DIRNAME
-                ),
-                'rollout': str(
-                    Path(RUN_PREDICTIONS_DIRNAME) / RUN_ROLLOUT_DIRNAME
-                ),
-            },
         },
     )
     params = manifest.setdefault('params', {})
@@ -170,26 +160,14 @@ def write_manifest(
         'prediction_dir': str(
             Path(RUN_PARAMS_DIRNAME) / paths.param_key / RUN_PREDICTIONS_DIRNAME
         ),
-        'prediction_dirs': {
-            'teacher_forced': str(
-                Path(RUN_PARAMS_DIRNAME)
-                / paths.param_key
-                / RUN_PREDICTIONS_DIRNAME
-                / RUN_TEACHER_FORCED_DIRNAME
-            ),
-            'rollout': str(
-                Path(RUN_PARAMS_DIRNAME)
-                / paths.param_key
-                / RUN_PREDICTIONS_DIRNAME
-                / RUN_ROLLOUT_DIRNAME
-            ),
-        },
         'reference_dirs': {
             'test': str(
                 Path(RUN_REFERENCES_DIRNAME) / 'test' / paths.param_key
             ),
         },
-        'prediction_glob': '**/pred_sim_*.npy',
+        'prediction_glob': str(
+            Path(RUN_PREDICTIONS_DIRNAME) / 'pred_sim_*.npy'
+        ),
     })
     _update_family_manifest(manifest, paths.param_key, paths.data_param)
 
@@ -205,47 +183,12 @@ def write_manifest(
 def prediction_file(
     paths: ExperimentParamPaths,
     sim_id: str,
-    *,
-    is_rollout: bool = False,
 ) -> Path:
-    suffix = '_rollout' if is_rollout else ''
-    mode_dir = prediction_mode_dir(
-        paths, is_rollout=is_rollout, create=True,
-    )
-    return mode_dir / f'pred_sim_{sim_id}{suffix}.npy'
+    return paths.prediction_dir / f'pred_sim_{sim_id}.npy'
 
 
 def prediction_files(paths: ExperimentParamPaths) -> list[Path]:
-    if paths.layout == RUN_LAYOUT:
-        collected: dict[str, Path] = {}
-        for pred_path in sorted(paths.param_dir.glob('pred_sim_*.npy')):
-            collected[pred_path.name] = pred_path
-        for mode_dir in (
-            prediction_mode_dir(paths, is_rollout=False),
-            prediction_mode_dir(paths, is_rollout=True),
-        ):
-            if not mode_dir.exists():
-                continue
-            for pred_path in sorted(mode_dir.glob('pred_sim_*.npy')):
-                collected[pred_path.name] = pred_path
-        return sorted(collected.values())
     return sorted(paths.prediction_dir.glob('pred_sim_*.npy'))
-
-
-def prediction_mode_dir(
-    paths: ExperimentParamPaths,
-    *,
-    is_rollout: bool = False,
-    create: bool = False,
-) -> Path:
-    if paths.layout != RUN_LAYOUT:
-        return paths.prediction_dir
-
-    dirname = RUN_ROLLOUT_DIRNAME if is_rollout else RUN_TEACHER_FORCED_DIRNAME
-    mode_dir = paths.prediction_dir / dirname
-    if create:
-        mode_dir.mkdir(parents=True, exist_ok=True)
-    return mode_dir
 
 
 def reference_dir(

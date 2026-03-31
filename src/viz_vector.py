@@ -1,5 +1,5 @@
 """
-Vector-field comparison visualization for paired component predictions.
+Vector-field comparison visualization for paired autoregressive predictions.
 
 This script renders per-frame comparisons for vector fields such as:
 
@@ -40,7 +40,6 @@ from experiment_layout import (
 from viz_scalar import (
     DATA_DIR,
     EXPERIMENTS_DIR,
-    N_INPUT_FRAMES,
     _align_trajectories,
     _curve_ylim,
     _format_alfven_time_label,
@@ -123,7 +122,7 @@ def _vector_output_dir(exp_dir, spec):
 
 
 def _prediction_map(paths):
-    """Map (sim_id, is_rollout) keys to prediction file paths."""
+    """Map simulation ids to prediction file paths."""
     mapping = {}
     pred_files = prediction_files(paths)
     if not pred_files:
@@ -134,28 +133,11 @@ def _prediction_map(paths):
     return mapping
 
 
-def _format_mode_list(sim_ids):
+def _format_sim_list(sim_ids):
     """Return a compact simulation-id list for error messages."""
     if not sim_ids:
         return 'none'
     return ', '.join(sim_ids)
-
-
-def _mode_inventory(mapping):
-    """Split prediction keys into teacher-forced and rollout sim-id lists."""
-    teacher_forced = []
-    rollout = []
-    for sim_id, is_rollout in sorted(mapping):
-        if is_rollout:
-            rollout.append(sim_id)
-        else:
-            teacher_forced.append(sim_id)
-    return teacher_forced, rollout
-
-
-def _mode_label(is_rollout):
-    """Return a human-readable prediction mode label."""
-    return 'rollout' if is_rollout else 'teacher-forced'
 
 
 def _no_pairs_error(exp_dir, spec, component_dirs, component_maps):
@@ -167,38 +149,9 @@ def _no_pairs_error(exp_dir, spec, component_dirs, component_maps):
 
     inventory_lines = []
     for component in spec['components']:
-        teacher_forced, rollout = _mode_inventory(component_maps[component])
         inventory_lines.append(
-            f"  {component}: teacher-forced="
-            f"{_format_mode_list(teacher_forced)}; rollout="
-            f"{_format_mode_list(rollout)}"
+            f"  {component}: {_format_sim_list(sorted(component_maps[component]))}"
         )
-
-    sim_modes = {}
-    for component, mapping in component_maps.items():
-        modes_by_sim = {}
-        for sim_id, is_rollout in mapping:
-            modes_by_sim.setdefault(sim_id, []).append(_mode_label(is_rollout))
-        sim_modes[component] = modes_by_sim
-
-    shared_sim_ids = sorted(set.intersection(*(
-        set(modes_by_sim)
-        for modes_by_sim in sim_modes.values()
-    )))
-    mismatch_lines = []
-    for sim_id in shared_sim_ids:
-        shared_modes = set.intersection(*(
-            set(sim_modes[component][sim_id])
-            for component in spec['components']
-        ))
-        if not shared_modes:
-            mismatch_lines.append(
-                f"  sim {sim_id}: "
-                + '; '.join(
-                    f"{component}={','.join(sim_modes[component][sim_id])}"
-                    for component in spec['components']
-                )
-            )
 
     commands = '\n'.join(
         f"  python src/inference.py --experiments-dir {exp_dir} "
@@ -213,21 +166,11 @@ def _no_pairs_error(exp_dir, spec, component_dirs, component_maps):
         + '\n'.join(inventory_lines)
         + "\n"
     )
-
-    if mismatch_lines:
-        message += (
-            "Shared simulation IDs without a common prediction mode:\n"
-            + '\n'.join(mismatch_lines)
-            + "\n"
-        )
-
     message += (
         "Vector rendering requires both components for the same simulation ID "
-        "and the same mode (teacher-forced or rollout).\n"
+        "under the same experiment root.\n"
         "Generate matching predictions first, for example:\n"
-        f"{commands}\n"
-        "For rollout visualizations, rerun both commands with the same "
-        "--rollout-steps N."
+        f"{commands}"
     )
     return FileNotFoundError(message)
 
@@ -241,67 +184,34 @@ def _collect_prediction_pairs(exp_dir, spec):
         component_dirs[component] = pred_dir
         component_maps[component] = _prediction_map(component_paths)
 
-    shared_keys = sorted(
+    shared_sim_ids = sorted(
         set.intersection(*(set(mapping) for mapping in component_maps.values()))
     )
-    if not shared_keys:
+    if not shared_sim_ids:
         raise _no_pairs_error(exp_dir, spec, component_dirs, component_maps)
 
-    tf_files = []
-    rollout_files = []
-    for sim_id, is_rollout in shared_keys:
+    paired_files = []
+    for sim_id in shared_sim_ids:
         pair = {
-            component: component_maps[component][(sim_id, is_rollout)]
+            component: component_maps[component][sim_id]
             for component in spec['components']
         }
-        if is_rollout:
-            rollout_files.append((sim_id, pair))
-        else:
-            tf_files.append((sim_id, pair))
+        paired_files.append((sim_id, pair))
 
-    return tf_files, rollout_files, component_dirs
+    return paired_files, component_dirs
 
 
 def _load_reference_trajectory(
     test_dir,
     sim_id,
-    is_rollout,
-    n_pred_frames=None,
+    n_pred_frames,
     preferred_ref_path=None,
 ):
     """Load a reference trajectory for one component."""
     ref, dense = _load_rollout_reference(
         test_dir, sim_id, preferred_ref_path=preferred_ref_path,
     )
-    if is_rollout:
-        if n_pred_frames is None:
-            raise ValueError(
-                'n_pred_frames is required for rollout reference loading.'
-            )
-        return _rollout_reference_trajectory(ref, dense, n_pred_frames)
-
-    if dense:
-        frames = np.arange(ref.shape[0], dtype=np.int64)
-        return frames, ref
-
-    y = np.load(test_dir / f'y_sim_{sim_id}.npy')
-    return _collapse_teacher_forced_reference(y)
-
-
-def _collapse_teacher_forced_reference(windowed):
-    """Collapse teacher-forced targets onto one absolute timeline."""
-    selected = {}
-    n_samples = windowed.shape[0]
-    t_out = windowed.shape[3]
-    for lead in range(t_out):
-        for sample in range(n_samples):
-            frame = N_INPUT_FRAMES + sample + lead
-            if frame not in selected:
-                selected[frame] = windowed[sample, :, :, lead]
-
-    frames = np.array(sorted(selected), dtype=np.int64)
-    traj = np.stack([selected[frame] for frame in frames], axis=0)
-    return frames, traj
+    return _rollout_reference_trajectory(ref, dense, n_pred_frames)
 
 
 def _align_component_pair(component_data, ordered_components):
@@ -385,14 +295,12 @@ def _build_diagnostic(spec, param, sim_id, test_dir,
     }
 
 
-def _build_vector_dataset(pair_paths, sim_id, spec, is_rollout):
+def _build_vector_dataset(pair_paths, sim_id, spec):
     """Load paired component trajectories and derived diagnostics."""
     components = spec['components']
     pred_components = {}
     for component in components:
-        pred_traj = _load_optional_prediction_trajectory(
-            pair_paths[component], is_rollout,
-        )
+        pred_traj = _load_optional_prediction_trajectory(pair_paths[component])
         if pred_traj is None:
             raise FileNotFoundError(
                 f'Missing prediction trajectory for {pair_paths[component]}.'
@@ -409,7 +317,6 @@ def _build_vector_dataset(pair_paths, sim_id, spec, is_rollout):
         ref_components[component] = _load_reference_trajectory(
             test_dir,
             sim_id,
-            is_rollout,
             n_pred_frames=len(pred_frames),
             preferred_ref_path=reference_file(
                 spec['component_paths'][component], sim_id,
@@ -842,7 +749,7 @@ def _spectrum_limits(dataset, selected_frames):
 
 
 def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
-                quiver_stride, suffix=''):
+                quiver_stride):
     """Build render jobs for all selected frames of one simulation."""
     selected_frames = dataset['pred_frames']
     if max_frames is not None:
@@ -856,12 +763,8 @@ def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
     jobs = []
     skipped = 0
     file_prefix = spec['file_prefix']
-    suffix_token = f'_{suffix}' if suffix else ''
     for frame in selected_frames:
-        fname = (
-            f'{file_prefix}_frame_{int(frame):04d}_sim_{sim_id}'
-            f'{suffix_token}.png'
-        )
+        fname = f'{file_prefix}_frame_{int(frame):04d}_sim_{sim_id}.png'
         if (vis_dir / fname).exists() and not force:
             skipped += 1
             continue
@@ -877,7 +780,7 @@ def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
             'spec': spec,
             'sim_id': sim_id,
             'frame': int(frame),
-            'suffix': suffix,
+            'suffix': '',
             'vmin': vmin,
             'vmax': vmax,
             'eabs': eabs,
@@ -905,10 +808,9 @@ def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
 
 def visualize_prediction_pair(sim_id, pair_paths, spec, exp_dir, vis_dir,
                               force, max_frames=None, workers=None,
-                              quiver_stride=8, is_rollout=False):
+                              quiver_stride=8):
     """Render all frames for one paired prediction file set."""
-    dataset = _build_vector_dataset(pair_paths, sim_id, spec, is_rollout)
-    suffix = 'rollout' if is_rollout else ''
+    dataset = _build_vector_dataset(pair_paths, sim_id, spec)
     jobs, skipped = _frame_jobs(
         dataset,
         spec,
@@ -917,9 +819,8 @@ def visualize_prediction_pair(sim_id, pair_paths, spec, exp_dir, vis_dir,
         force,
         max_frames,
         quiver_stride,
-        suffix=suffix,
     )
-    desc = f'  sim {sim_id}{" rollout" if is_rollout else ""}'
+    desc = f'  sim {sim_id}'
     total = _run_vector_jobs(jobs, desc=desc, workers=workers)
     return total, skipped
 
@@ -975,9 +876,7 @@ def main():
     vis_dir = _vector_output_dir(exp_dir, spec)
     vis_dir.mkdir(parents=True, exist_ok=True)
 
-    tf_files, rollout_files, component_dirs = _collect_prediction_pairs(
-        exp_dir, spec,
-    )
+    paired_files, component_dirs = _collect_prediction_pairs(exp_dir, spec)
 
     print(f"Processing vector family: {spec['family']}")
     if spec['param'] != opt.param:
@@ -991,10 +890,7 @@ def main():
         )
     )
     print(f'Output directory: {vis_dir}')
-    print(
-        f'Found {len(tf_files)} paired teacher-forced file(s), '
-        f'{len(rollout_files)} paired rollout file(s)'
-    )
+    print(f'Found {len(paired_files)} paired prediction file(s)')
     if opt.workers and opt.workers > 1:
         print(f'Parallel rendering: {opt.workers} worker processes')
     else:
@@ -1003,7 +899,7 @@ def main():
     total_pngs = 0
     skipped_pngs = 0
 
-    for sim_id, pair_paths in tqdm(tf_files, desc='Teacher-forced', unit='file'):
+    for sim_id, pair_paths in tqdm(paired_files, desc='Predictions', unit='file'):
         total, skipped = visualize_prediction_pair(
             sim_id,
             pair_paths,
@@ -1014,23 +910,6 @@ def main():
             max_frames=opt.max_frames,
             workers=opt.workers,
             quiver_stride=opt.quiver_stride,
-            is_rollout=False,
-        )
-        total_pngs += total
-        skipped_pngs += skipped
-
-    for sim_id, pair_paths in tqdm(rollout_files, desc='Rollout', unit='file'):
-        total, skipped = visualize_prediction_pair(
-            sim_id,
-            pair_paths,
-            spec,
-            exp_dir,
-            vis_dir,
-            opt.force,
-            max_frames=opt.max_frames,
-            workers=opt.workers,
-            quiver_stride=opt.quiver_stride,
-            is_rollout=True,
         )
         total_pngs += total
         skipped_pngs += skipped
@@ -1042,18 +921,11 @@ def main():
 
     print('\nRendering movies...')
     prefix = spec['file_prefix']
-    for sim_id, _ in tf_files:
+    for sim_id, _ in paired_files:
         render_movie(
             vis_dir,
             png_glob=f'{prefix}_frame_*_sim_{sim_id}.png',
             movie_name=f'{prefix}_movie_sim_{sim_id}.mp4',
-            force=opt.force,
-        )
-    for sim_id, _ in rollout_files:
-        render_movie(
-            vis_dir,
-            png_glob=f'{prefix}_frame_*_sim_{sim_id}_rollout.png',
-            movie_name=f'{prefix}_movie_sim_{sim_id}_rollout.mp4',
             force=opt.force,
         )
 
