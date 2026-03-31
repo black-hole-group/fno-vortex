@@ -32,6 +32,8 @@ import numpy as np
 from tqdm import tqdm
 
 from experiment_layout import (
+    prediction_files,
+    reference_file,
     resolve_experiment_param,
     resolve_vector_output_dir,
 )
@@ -120,15 +122,114 @@ def _vector_output_dir(exp_dir, spec):
     )
 
 
-def _prediction_map(vis_dir):
+def _prediction_map(paths):
     """Map (sim_id, is_rollout) keys to prediction file paths."""
     mapping = {}
-    if not vis_dir.exists():
+    pred_files = prediction_files(paths)
+    if not pred_files:
         return mapping
 
-    for pred_path in sorted(vis_dir.glob('pred_sim_*.npy')):
+    for pred_path in pred_files:
         mapping[parse_pred_file(pred_path)] = pred_path
     return mapping
+
+
+def _format_mode_list(sim_ids):
+    """Return a compact simulation-id list for error messages."""
+    if not sim_ids:
+        return 'none'
+    return ', '.join(sim_ids)
+
+
+def _mode_inventory(mapping):
+    """Split prediction keys into teacher-forced and rollout sim-id lists."""
+    teacher_forced = []
+    rollout = []
+    for sim_id, is_rollout in sorted(mapping):
+        if is_rollout:
+            rollout.append(sim_id)
+        else:
+            teacher_forced.append(sim_id)
+    return teacher_forced, rollout
+
+
+def _mode_label(is_rollout):
+    """Return a human-readable prediction mode label."""
+    return 'rollout' if is_rollout else 'teacher-forced'
+
+
+def _no_pairs_error(exp_dir, spec, component_dirs, component_maps):
+    """Build an actionable error for missing paired vector predictions."""
+    details = ', '.join(
+        f"{component}: {component_dirs[component]}"
+        for component in spec['components']
+    )
+
+    inventory_lines = []
+    for component in spec['components']:
+        teacher_forced, rollout = _mode_inventory(component_maps[component])
+        inventory_lines.append(
+            f"  {component}: teacher-forced="
+            f"{_format_mode_list(teacher_forced)}; rollout="
+            f"{_format_mode_list(rollout)}"
+        )
+
+    sim_modes = {}
+    for component, mapping in component_maps.items():
+        modes_by_sim = {}
+        for sim_id, is_rollout in mapping:
+            modes_by_sim.setdefault(sim_id, []).append(_mode_label(is_rollout))
+        sim_modes[component] = modes_by_sim
+
+    shared_sim_ids = sorted(set.intersection(*(
+        set(modes_by_sim)
+        for modes_by_sim in sim_modes.values()
+    )))
+    mismatch_lines = []
+    for sim_id in shared_sim_ids:
+        shared_modes = set.intersection(*(
+            set(sim_modes[component][sim_id])
+            for component in spec['components']
+        ))
+        if not shared_modes:
+            mismatch_lines.append(
+                f"  sim {sim_id}: "
+                + '; '.join(
+                    f"{component}={','.join(sim_modes[component][sim_id])}"
+                    for component in spec['components']
+                )
+            )
+
+    commands = '\n'.join(
+        f"  python src/inference.py --experiments-dir {exp_dir} "
+        f"--param {spec['component_paths'][component].input_param}"
+        for component in spec['components']
+    )
+
+    message = (
+        "No paired pred_sim_*.npy files found for both vector components. "
+        f"Checked {details}.\n"
+        "Available predictions:\n"
+        + '\n'.join(inventory_lines)
+        + "\n"
+    )
+
+    if mismatch_lines:
+        message += (
+            "Shared simulation IDs without a common prediction mode:\n"
+            + '\n'.join(mismatch_lines)
+            + "\n"
+        )
+
+    message += (
+        "Vector rendering requires both components for the same simulation ID "
+        "and the same mode (teacher-forced or rollout).\n"
+        "Generate matching predictions first, for example:\n"
+        f"{commands}\n"
+        "For rollout visualizations, rerun both commands with the same "
+        "--rollout-steps N."
+    )
+    return FileNotFoundError(message)
 
 
 def _collect_prediction_pairs(exp_dir, spec):
@@ -138,20 +239,13 @@ def _collect_prediction_pairs(exp_dir, spec):
     for component, component_paths in spec['component_paths'].items():
         pred_dir = component_paths.prediction_dir
         component_dirs[component] = pred_dir
-        component_maps[component] = _prediction_map(pred_dir)
+        component_maps[component] = _prediction_map(component_paths)
 
     shared_keys = sorted(
         set.intersection(*(set(mapping) for mapping in component_maps.values()))
     )
     if not shared_keys:
-        details = ', '.join(
-            f"{component}: {component_dirs[component]}"
-            for component in spec['components']
-        )
-        raise FileNotFoundError(
-            "No paired pred_sim_*.npy files found for both vector components. "
-            f"Checked {details}."
-        )
+        raise _no_pairs_error(exp_dir, spec, component_dirs, component_maps)
 
     tf_files = []
     rollout_files = []
@@ -168,9 +262,17 @@ def _collect_prediction_pairs(exp_dir, spec):
     return tf_files, rollout_files, component_dirs
 
 
-def _load_reference_trajectory(test_dir, sim_id, is_rollout, n_pred_frames=None):
+def _load_reference_trajectory(
+    test_dir,
+    sim_id,
+    is_rollout,
+    n_pred_frames=None,
+    preferred_ref_path=None,
+):
     """Load a reference trajectory for one component."""
-    ref, dense = _load_rollout_reference(test_dir, sim_id)
+    ref, dense = _load_rollout_reference(
+        test_dir, sim_id, preferred_ref_path=preferred_ref_path,
+    )
     if is_rollout:
         if n_pred_frames is None:
             raise ValueError(
@@ -305,7 +407,13 @@ def _build_vector_dataset(pair_paths, sim_id, spec, is_rollout):
     for component, component_param in spec['component_params'].items():
         test_dir = Path(DATA_DIR) / component_param / 'test'
         ref_components[component] = _load_reference_trajectory(
-            test_dir, sim_id, is_rollout, n_pred_frames=len(pred_frames),
+            test_dir,
+            sim_id,
+            is_rollout,
+            n_pred_frames=len(pred_frames),
+            preferred_ref_path=reference_file(
+                spec['component_paths'][component], sim_id,
+            ),
         )
 
     ref_frames, ref_comp0, ref_comp1 = _align_component_pair(

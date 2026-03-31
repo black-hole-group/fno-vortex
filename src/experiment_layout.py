@@ -14,10 +14,19 @@ ROOT_EXPERIMENTS_DIR = ROOT_DIR / 'experiments'
 MANIFEST_NAME = 'manifest.json'
 RUN_PARAMS_DIRNAME = 'params'
 RUN_VECTOR_DIRNAME = 'vector'
+RUN_PREDICTIONS_DIRNAME = 'predictions'
+RUN_REFERENCES_DIRNAME = 'references'
 RUN_RENDER_DIRNAME = 'renders'
+RUN_TEACHER_FORCED_DIRNAME = 'teacher_forced'
+RUN_ROLLOUT_DIRNAME = 'rollout'
 
 LEGACY_LAYOUT = 'legacy'
 RUN_LAYOUT = 'run'
+
+VECTOR_FAMILY_COMPONENTS = {
+    'magnetic': ('bx', 'by'),
+    'velocity': ('vx', 'vy'),
+}
 
 
 @dataclass(frozen=True)
@@ -64,7 +73,7 @@ def resolve_experiment_param(
 
     if layout == RUN_LAYOUT:
         param_dir = exp_path / RUN_PARAMS_DIRNAME / param_key
-        prediction_dir = param_dir
+        prediction_dir = param_dir / RUN_PREDICTIONS_DIRNAME
         render_dir = param_dir / RUN_RENDER_DIRNAME
         checkpoint_dir = param_dir
     else:
@@ -93,6 +102,7 @@ def resolve_experiment_param(
 
 def ensure_param_layout(paths: ExperimentParamPaths) -> None:
     paths.param_dir.mkdir(parents=True, exist_ok=True)
+    paths.prediction_dir.mkdir(parents=True, exist_ok=True)
     paths.render_dir.mkdir(parents=True, exist_ok=True)
     if paths.layout == LEGACY_LAYOUT:
         paths.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -119,22 +129,37 @@ def write_manifest(
     now = _timestamp()
     if not manifest:
         manifest = {
-            'layout_version': 1,
-            'layout': 'run-centric-v1',
+            'layout_version': 2,
+            'layout': 'run-centric-v2',
             'created_at': now,
         }
+    elif manifest.get('layout_version', 0) < 2:
+        manifest['layout_version'] = 2
+        manifest['layout'] = 'run-centric-v2'
 
     manifest['updated_at'] = now
-    manifest.setdefault(
-        'artifacts',
+    artifacts = manifest.setdefault('artifacts', {})
+    _deep_merge(
+        artifacts,
         {
             'params_dir': RUN_PARAMS_DIRNAME,
+            'predictions_dirname': RUN_PREDICTIONS_DIRNAME,
+            'references_dir': RUN_REFERENCES_DIRNAME,
             'vector_dir': RUN_VECTOR_DIRNAME,
             'render_dirname': RUN_RENDER_DIRNAME,
+            'prediction_modes': {
+                'teacher_forced': str(
+                    Path(RUN_PREDICTIONS_DIRNAME) / RUN_TEACHER_FORCED_DIRNAME
+                ),
+                'rollout': str(
+                    Path(RUN_PREDICTIONS_DIRNAME) / RUN_ROLLOUT_DIRNAME
+                ),
+            },
         },
     )
     params = manifest.setdefault('params', {})
-    params[paths.param_key] = {
+    param_entry = params.setdefault(paths.param_key, {})
+    _deep_merge(param_entry, {
         'data_param': paths.data_param,
         'param_dir': str(
             Path(RUN_PARAMS_DIRNAME) / paths.param_key
@@ -142,8 +167,31 @@ def write_manifest(
         'render_dir': str(
             Path(RUN_PARAMS_DIRNAME) / paths.param_key / RUN_RENDER_DIRNAME
         ),
-        'prediction_glob': 'pred_sim_*.npy',
-    }
+        'prediction_dir': str(
+            Path(RUN_PARAMS_DIRNAME) / paths.param_key / RUN_PREDICTIONS_DIRNAME
+        ),
+        'prediction_dirs': {
+            'teacher_forced': str(
+                Path(RUN_PARAMS_DIRNAME)
+                / paths.param_key
+                / RUN_PREDICTIONS_DIRNAME
+                / RUN_TEACHER_FORCED_DIRNAME
+            ),
+            'rollout': str(
+                Path(RUN_PARAMS_DIRNAME)
+                / paths.param_key
+                / RUN_PREDICTIONS_DIRNAME
+                / RUN_ROLLOUT_DIRNAME
+            ),
+        },
+        'reference_dirs': {
+            'test': str(
+                Path(RUN_REFERENCES_DIRNAME) / 'test' / paths.param_key
+            ),
+        },
+        'prediction_glob': '**/pred_sim_*.npy',
+    })
+    _update_family_manifest(manifest, paths.param_key, paths.data_param)
 
     if metadata:
         _deep_merge(manifest, metadata)
@@ -161,11 +209,70 @@ def prediction_file(
     is_rollout: bool = False,
 ) -> Path:
     suffix = '_rollout' if is_rollout else ''
-    return paths.prediction_dir / f'pred_sim_{sim_id}{suffix}.npy'
+    mode_dir = prediction_mode_dir(
+        paths, is_rollout=is_rollout, create=True,
+    )
+    return mode_dir / f'pred_sim_{sim_id}{suffix}.npy'
 
 
 def prediction_files(paths: ExperimentParamPaths) -> list[Path]:
+    if paths.layout == RUN_LAYOUT:
+        collected: dict[str, Path] = {}
+        for pred_path in sorted(paths.param_dir.glob('pred_sim_*.npy')):
+            collected[pred_path.name] = pred_path
+        for mode_dir in (
+            prediction_mode_dir(paths, is_rollout=False),
+            prediction_mode_dir(paths, is_rollout=True),
+        ):
+            if not mode_dir.exists():
+                continue
+            for pred_path in sorted(mode_dir.glob('pred_sim_*.npy')):
+                collected[pred_path.name] = pred_path
+        return sorted(collected.values())
     return sorted(paths.prediction_dir.glob('pred_sim_*.npy'))
+
+
+def prediction_mode_dir(
+    paths: ExperimentParamPaths,
+    *,
+    is_rollout: bool = False,
+    create: bool = False,
+) -> Path:
+    if paths.layout != RUN_LAYOUT:
+        return paths.prediction_dir
+
+    dirname = RUN_ROLLOUT_DIRNAME if is_rollout else RUN_TEACHER_FORCED_DIRNAME
+    mode_dir = paths.prediction_dir / dirname
+    if create:
+        mode_dir.mkdir(parents=True, exist_ok=True)
+    return mode_dir
+
+
+def reference_dir(
+    paths: ExperimentParamPaths,
+    *,
+    split: str = 'test',
+    create: bool = False,
+) -> Path | None:
+    if paths.layout != RUN_LAYOUT:
+        return None
+
+    ref_dir = paths.exp_dir / RUN_REFERENCES_DIRNAME / split / paths.param_key
+    if create:
+        ref_dir.mkdir(parents=True, exist_ok=True)
+    return ref_dir
+
+
+def reference_file(
+    paths: ExperimentParamPaths,
+    sim_id: str,
+    *,
+    split: str = 'test',
+) -> Path | None:
+    ref_dir = reference_dir(paths, split=split)
+    if ref_dir is None:
+        return None
+    return ref_dir / f'ref_sim_{sim_id}.npy'
 
 
 def resolve_vector_output_dir(
@@ -351,3 +458,32 @@ def _preferred_data_matches(matches: list[str], leaf: str) -> list[str]:
 
 def _timestamp() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+
+
+def _update_family_manifest(
+    manifest: dict[str, Any],
+    param_key: str,
+    data_param: str,
+) -> None:
+    family_name = None
+    for candidate, components in VECTOR_FAMILY_COMPONENTS.items():
+        if param_key in components:
+            family_name = candidate
+            family_components = components
+            break
+
+    if family_name is None:
+        return
+
+    families = manifest.setdefault('families', {})
+    family = families.setdefault(family_name, {})
+    family['components'] = list(family_components)
+    dataset_prefix = Path(data_param).parent.as_posix()
+    if dataset_prefix != '.':
+        family['dataset_prefix'] = dataset_prefix
+
+    params = family.setdefault('params', {})
+    manifest_params = manifest.get('params', {})
+    for component in family_components:
+        if component in manifest_params:
+            params[component] = manifest_params[component]['data_param']

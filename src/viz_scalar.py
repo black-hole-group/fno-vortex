@@ -54,6 +54,7 @@ import os
 from experiment_layout import (
     prediction_file,
     prediction_files,
+    reference_file,
     resolve_experiment_param,
 )
 
@@ -243,20 +244,24 @@ def _build_magnetic_dissipation_data(
 ):
     """Build precomputed epsilon_M data for one simulation."""
     mu = _load_mu(test_dir, sim_id)
-    magnetic_params = {
-        field: _replace_param_leaf(param, field) for field in ('bx', 'by')
-    }
-    magnetic_test_dirs = {
-        field: Path(DATA_DIR) / magnetic_params[field] / 'test'
-        for field in magnetic_params
+    magnetic_paths = {
+        field: resolve_experiment_param(
+            exp_dir, _replace_param_leaf(param, field), DATA_DIR,
+        )
+        for field in ('bx', 'by')
     }
 
     if is_rollout and rollout_n_frames is None:
         raise ValueError("rollout_n_frames is required for rollout epsilon_M.")
 
     ref_components = {}
-    for field, field_test_dir in magnetic_test_dirs.items():
-        ref, dense = _load_rollout_reference(field_test_dir, sim_id)
+    for field, field_paths in magnetic_paths.items():
+        field_test_dir = Path(DATA_DIR) / field_paths.data_param / 'test'
+        ref, dense = _load_rollout_reference(
+            field_test_dir,
+            sim_id,
+            preferred_ref_path=reference_file(field_paths, sim_id),
+        )
         if is_rollout:
             ref_components[field] = _rollout_reference_trajectory(
                 ref, dense, rollout_n_frames
@@ -285,12 +290,9 @@ def _build_magnetic_dissipation_data(
 
     pred_components = {}
     missing_pred = []
-    for field, magnetic_param in magnetic_params.items():
-        magnetic_paths = resolve_experiment_param(
-            exp_dir, magnetic_param, DATA_DIR,
-        )
+    for field, field_paths in magnetic_paths.items():
         pred_path = prediction_file(
-            magnetic_paths, sim_id, is_rollout=is_rollout,
+            field_paths, sim_id, is_rollout=is_rollout,
         )
         pred_traj = _load_optional_prediction_trajectory(pred_path, is_rollout)
         if pred_traj is None:
@@ -646,17 +648,25 @@ def _run_jobs(jobs, desc, workers=None):
     return len(jobs)
 
 
-def _load_rollout_reference(test_dir, sim_id):
+def _load_rollout_reference(test_dir, sim_id, preferred_ref_path=None):
     """Load the reference trajectory for rollout visualization.
 
     Tries, in order:
-      1. ref_sim_<id>.npy — dense full-trajectory array (N_frames, H, W)
-         produced by prepare_reference.py.  Returns (ref_array, True).
-      2. y_sim_<id>.npy sample 0 — sparse supervised windows (H, W, T_out).
+      1. run-local ref_sim_<id>.npy — dense full-trajectory array (N_frames,
+         H, W) produced by prepare_reference.py under a run root.
+      2. dataset ref_sim_<id>.npy — dense full-trajectory array (N_frames,
+         H, W) produced by prepare_reference.py in data/<param>/<split>/.
+      3. y_sim_<id>.npy sample 0 — sparse supervised windows (H, W, T_out).
          Returns (ref_sparse, False).
     """
-    ref_path = test_dir / f"ref_sim_{sim_id}.npy"
-    if ref_path.exists():
+    candidate_paths = []
+    if preferred_ref_path is not None:
+        candidate_paths.append(Path(preferred_ref_path))
+    candidate_paths.append(test_dir / f"ref_sim_{sim_id}.npy")
+
+    for ref_path in candidate_paths:
+        if not ref_path.exists():
+            continue
         ref = np.load(ref_path)  # (N_frames, H, W)
         return ref, True
 
@@ -731,7 +741,8 @@ def visualize_teacher_forced(pred_path, sim_id, exp_dir, test_dir, vis_dir,
 
 
 def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
-                      force, max_frames=None, workers=None):
+                      force, max_frames=None, workers=None,
+                      preferred_ref_path=None):
     """Visualize an autoregressive rollout prediction file.
 
     pred shape: (1, 128, 128, 20*N)  — single trajectory, sample 0 only
@@ -753,7 +764,9 @@ def visualize_rollout(pred_path, sim_id, exp_dir, test_dir, vis_dir, param,
         rollout_n_frames=n_frames,
     )
 
-    ref, dense = _load_rollout_reference(test_dir, sim_id)
+    ref, dense = _load_rollout_reference(
+        test_dir, sim_id, preferred_ref_path=preferred_ref_path,
+    )
     # dense=True:  ref shape (N_sim_frames, H, W)
     # dense=False: ref shape (H, W, T_out) — sparse window 0 only
 
@@ -979,6 +992,7 @@ def main():
             pred_path, sim_id, exp_dir, test_dir, vis_dir, paths.data_param,
             opt.force,
             max_frames=opt.max_frames, workers=opt.workers,
+            preferred_ref_path=reference_file(paths, sim_id),
         )
         total_pngs += n
         skipped_pngs += s

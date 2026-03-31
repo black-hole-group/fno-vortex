@@ -17,6 +17,7 @@ Usage — prepare all fields at once (recommended):
 
     python src/prepare_reference.py \\
         --param-prefix idefix/numpy/t20 \\
+        [--experiments-dir experiments/<run>] \\
         [--runs-dir data/idefix/runs] \\
         [--params-csv data/idefix/params.csv] \\
         [--data-dir data] \\
@@ -26,6 +27,7 @@ Usage — single field (backward compatible):
 
     python src/prepare_reference.py \\
         --param idefix/numpy/t20/by \\
+        [--experiments-dir experiments/<run>] \\
         [--runs-dir data/idefix/runs] \\
         [--params-csv data/idefix/params.csv] \\
         [--data-dir data] \\
@@ -42,6 +44,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+from experiment_layout import (
+    ensure_param_layout,
+    reference_dir,
+    resolve_experiment_param,
+    write_manifest,
+)
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ROOT_DIR = SCRIPT_DIR.parent
@@ -145,6 +154,15 @@ def main():
     parser.add_argument("--data-dir",
                         default=str(ROOT_DIR / "data"),
                         help="Root data directory")
+    parser.add_argument(
+        "--experiments-dir",
+        default=None,
+        help=(
+            "Optional run root for writing prepared ref_sim_*.npy files under "
+            "experiments/<run>/references/<split>/<param>. When omitted, "
+            "references are written back into data/<param>/<split>/."
+        ),
+    )
     parser.add_argument("--split", type=str, default="test",
                         help="Which split to prepare reference files for")
     parser.add_argument("--n-frames", type=int, default=1000,
@@ -203,12 +221,57 @@ def main():
     print(f"Fields : {', '.join(all_fields)}")
     print(f"Split  : {args.split}  ({len(split_rows)} sims)")
     print(f"Runs   : {runs_dir}")
+    if args.experiments_dir:
+        print(f"Output : run-local references under {args.experiments_dir}")
+    else:
+        print(f"Output : dataset references under {data_dir}")
 
     # Pre-create output directories
     out_dirs = {}
     for leaf, (_, param_path) in field_map.items():
-        out_dir = data_dir / param_path / args.split
-        out_dir.mkdir(parents=True, exist_ok=True)
+        if args.experiments_dir is not None:
+            paths = resolve_experiment_param(
+                args.experiments_dir, param_path, data_dir, create=True,
+            )
+            ensure_param_layout(paths)
+            out_dir = reference_dir(paths, split=args.split, create=True)
+            if out_dir is None:
+                raise ValueError(
+                    "Run-local references require a run-scoped experiments "
+                    f"directory, got {args.experiments_dir!r}."
+                )
+            write_manifest(
+                paths,
+                metadata={
+                    'cli': {
+                        'experiments_dir': str(paths.exp_dir),
+                        'param': param_path,
+                    },
+                    'data': {
+                        'param': paths.data_param,
+                    },
+                    'references': {
+                        'split': args.split,
+                        'source_runs_dir': str(runs_dir),
+                        'n_frames': args.n_frames,
+                    },
+                    'params': {
+                        paths.param_key: {
+                            'reference_preparation': {
+                                'split': args.split,
+                                'output_dir': str(
+                                    out_dir.relative_to(paths.exp_dir)
+                                ),
+                                'source_runs_dir': str(runs_dir),
+                                'n_frames': args.n_frames,
+                            },
+                        },
+                    },
+                },
+            )
+        else:
+            out_dir = data_dir / param_path / args.split
+            out_dir.mkdir(parents=True, exist_ok=True)
         out_dirs[leaf] = out_dir
 
     for row in split_rows:

@@ -112,10 +112,19 @@ experiments/<run>/
       training_state.pt
       loss_64_30.npy
       train.log
-      pred_sim_000.npy
-      pred_sim_000_rollout.npy
+      predictions/
+        teacher_forced/
+          pred_sim_000.npy
+        rollout/
+          pred_sim_000_rollout.npy
       renders/
         ...
+  references/
+    test/
+      bx/
+        ref_sim_000.npy
+      by/
+        ref_sim_000.npy
   vector/
     magnetic/
     velocity/
@@ -136,7 +145,9 @@ Use `--fast` for a short smoke test that trains on a tiny subset of the data and
 **Output** (paths are relative to project root):
 - Legacy default root: `experiments/<param>/checkpoints/` and `experiments/<param>/visualizations/`
 - Dedicated run root: `experiments/<run>/params/<param>/`
-- Validation images for run-scoped layouts: `experiments/<run>/params/<param>/renders/`
+- Run-scoped prediction outputs: `experiments/<run>/params/<param>/predictions/teacher_forced/` and `.../predictions/rollout/`
+- Optional run-scoped dense references: `experiments/<run>/references/test/<param>/`
+- Validation/render images for run-scoped layouts: `experiments/<run>/params/<param>/renders/`
 
 Checkpoints created before the MAE-only refactor are not compatible with `--resume`; start a fresh run instead of resuming an older `training_state.pt`.
 
@@ -147,7 +158,8 @@ cd src
 python inference.py --param <parameter_name> [--experiments-dir <path>]
 ```
 
-Processes 21 test samples and saves denormalized predictions as `.npy` arrays.
+Processes all discovered test samples and saves denormalized predictions as
+`.npy` arrays.
 
 **Example:**
 ```bash
@@ -164,6 +176,20 @@ python inference.py \
   --param by
 ```
 
+Teacher-forced predictions are written under
+`params/<param>/predictions/teacher_forced/`. Autoregressive outputs are written
+under `params/<param>/predictions/rollout/`.
+
+To prepare dense rollout references inside the same run root instead of writing
+them back into `data/<param>/test/`, use:
+
+```bash
+cd src
+python prepare_reference.py \
+  --experiments-dir ../experiments/64_30_magfield \
+  --param-prefix idefix/numpy/t20
+```
+
 ### Visualization
 
 After inference, render scalar or vector diagnostics from the same run root:
@@ -178,6 +204,15 @@ python viz_vector.py \
   --experiments-dir ../experiments/64_30_autoreg--2026-31-03 \
   --param bx
 ```
+
+`viz_vector.py` requires paired predictions for both vector components under the
+same run root and in the same mode. For example, magnetic plots need matching
+`bx` and `by` files for the same `sim_id`, both teacher-forced or both rollout.
+
+This is the recommended way to organize a unified magnetic-field evaluation
+bundle: keep the raw `x_sim_*.npy` / `y_sim_*.npy` inputs in `data/`, but point
+both `bx` and `by` training, inference, and reference preparation at the same
+`experiments/<run>/` root.
 
 Legacy nested experiment layouts are still supported. For those runs you can
 continue passing the full nested parameter path when needed.

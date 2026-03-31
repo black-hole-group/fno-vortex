@@ -9,6 +9,7 @@ from architecture import FNO3d
 from experiment_layout import (
     ensure_param_layout,
     prediction_file,
+    prediction_mode_dir,
     resolve_experiment_param,
     write_manifest,
 )
@@ -101,8 +102,11 @@ def main():
     )
     ensure_param_layout(paths)
     exp_dir = paths.exp_dir
-    vis_dir = paths.prediction_dir
     data_param = paths.data_param
+    is_rollout = opt.rollout_steps > 1
+    output_dir = prediction_mode_dir(
+        paths, is_rollout=is_rollout, create=True,
+    )
     write_manifest(
         paths,
         metadata={
@@ -114,7 +118,17 @@ def main():
                 'param': data_param,
             },
             'inference': {
+                'mode': 'rollout' if is_rollout else 'teacher_forced',
                 'rollout_steps': opt.rollout_steps,
+            },
+            'params': {
+                paths.param_key: {
+                    'latest_inference': {
+                        'mode': 'rollout' if is_rollout else 'teacher_forced',
+                        'rollout_steps': opt.rollout_steps,
+                        'output_dir': str(output_dir.relative_to(exp_dir)),
+                    },
+                },
             },
         },
     )
@@ -129,6 +143,7 @@ def main():
     if data_param != opt.param:
         print(f"Resolved data parameter: {data_param}")
     print(f"Experiment layout: {paths.layout}")
+    print(f"Prediction mode: {'rollout' if is_rollout else 'teacher-forced'}")
 
     model = FNO3d(64, 64, 5, 30).cuda()
     model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
@@ -143,10 +158,10 @@ def main():
         return
 
     print(f"Test data directory: {test_dir}")
-    print(f"Output directory: {vis_dir}")
+    print(f"Output directory: {output_dir}")
     print(f"Loading model from: {checkpoint_path}")
 
-    if opt.rollout_steps > 1:
+    if is_rollout:
         print(f"Autoregressive rollout: {opt.rollout_steps} steps ({opt.rollout_steps * 20} frames total per simulation)")
 
     t1 = default_timer()
@@ -159,7 +174,7 @@ def main():
 
             x = np.load(x_path)
 
-            if opt.rollout_steps == 1:
+            if not is_rollout:
                 # Teacher-forced inference (original behavior, unchanged)
                 x[:,:,:,:,:-2] = 2*((x[:,:,:,:,:-2] - np.min(x[:,:,:,:,:-2])) / (np.max(x[:,:,:,:,:-2]) - np.min(x[:,:,:,:,:-2]))) - 1
                 x = torch.from_numpy(x).float().cuda()
@@ -183,7 +198,7 @@ def main():
     t2 = default_timer()
 
     print(f"\nInference completed in {t2-t1:.2f}s")
-    print(f"Saved {n_test} predictions to {vis_dir}/")
+    print(f"Saved {n_test} predictions to {output_dir}/")
 
 
 if __name__ == '__main__':
