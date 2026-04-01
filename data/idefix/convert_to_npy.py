@@ -13,10 +13,11 @@ Output per physical field (density, vx, vy, bx, by):
   data/<param>/test/y_<idx>.npy   shape (20, 128, 128, 20)
 
 Sliding window details:
-  - 1000 snapshots total (frames 0-999, dt=0.05)
+  - All available snapshots are used (frame count detected automatically from VTK files)
   - Input  : 5 consecutive frames starting at `start` (dt=0.05 code units each)
   - Output : 20 consecutive frames immediately after input (frames start+5 .. start+24)
-  - 20 sliding windows per simulation, evenly strided (stride=51, start frames 0,51,102,...,969)
+  - 20 sliding windows per simulation, evenly strided across the full timeline
+  - Window stride computed as (n_frames - 5 - 20) // 19; e.g. stride=19 for 401 frames
   - x channels 5-6: nu and mu broadcast to fill (128, 128, 20)
 
 Usage:
@@ -72,7 +73,6 @@ FIELD_MAP = {
     "BX2": "by",
 }
 
-N_SNAPSHOTS = 1000      # frames 0-999
 N_INPUT_FRAMES = 5      # number of consecutive input frames per sample
 INPUT_SPACING = 1       # input frames consecutive → dt=0.05
 N_INPUT_CHANNELS = 5    # 5 input frames per sample
@@ -80,11 +80,8 @@ OUTPUT_SPACING = 1      # output frames consecutive → dt=0.05
 N_OUTPUT_FRAMES = 20    # 20 output frames per sample
 N_SAMPLES = 20          # 20 sliding windows per simulation
 T_IN = 20               # temporal dimension in x array (= N_OUTPUT_FRAMES, matches model)
-# Stride between window start frames: evenly spaces N_SAMPLES windows across the full
-# timeline so the last window starts at frame N_SNAPSHOTS - N_INPUT_FRAMES - N_OUTPUT_FRAMES.
-# With defaults: (1000 - 5 - 20) // (20 - 1) = 51, covering frames 0..969.
-WINDOW_STRIDE = (N_SNAPSHOTS - N_INPUT_FRAMES - N_OUTPUT_FRAMES) // (N_SAMPLES - 1)
-MIN_SNAPSHOTS = N_INPUT_FRAMES + N_OUTPUT_FRAMES + (N_SAMPLES - 1) * WINDOW_STRIDE
+# Minimum frames to fit N_SAMPLES windows at stride=1
+MIN_SNAPSHOTS = N_INPUT_FRAMES + N_OUTPUT_FRAMES + N_SAMPLES - 1  # = 44
 
 
 def load_params(params_file):
@@ -96,8 +93,10 @@ def load_params(params_file):
 def load_all_snapshots(run_dir):
     """Load all VTK snapshots for a simulation and extract all fields in one pass.
 
-    Returns dict mapping field_key -> array of shape (N_SNAPSHOTS, 128, 128),
-    or None if the simulation is incomplete or corrupted.
+    Returns (snapshots_dict, window_stride) where snapshots_dict maps
+    field_key -> array of shape (n_frames, 128, 128), or None if the simulation
+    is incomplete or corrupted.  window_stride is computed dynamically from the
+    actual frame count so N_SAMPLES windows are evenly spaced across the timeline.
     """
     run_dir = Path(run_dir)
     vtk_files = sorted(run_dir.glob("data.????.vtk"))
@@ -108,8 +107,11 @@ def load_all_snapshots(run_dir):
     if len(vtk_files) < MIN_SNAPSHOTS:
         return None
 
+    n_frames = len(vtk_files)
+    window_stride = (n_frames - N_INPUT_FRAMES - N_OUTPUT_FRAMES) // (N_SAMPLES - 1)
+
     frames = {key: [] for key in FIELD_MAP}
-    for vtk_path in vtk_files[:N_SNAPSHOTS]:
+    for vtk_path in vtk_files:
         try:
             data = read_vtk(vtk_path)
         except Exception as e:
@@ -118,13 +120,15 @@ def load_all_snapshots(run_dir):
         for key in FIELD_MAP:
             frames[key].append(np.array(data[key]).squeeze())  # (128, 128)
 
-    return {key: np.stack(frames[key], axis=0) for key in FIELD_MAP}  # each (N_SNAPSHOTS, 128, 128)
+    snapshots = {key: np.stack(frames[key], axis=0) for key in FIELD_MAP}
+    return snapshots, window_stride
 
 
-def build_windows(snapshots, nu, mu):
+def build_windows(snapshots, nu, mu, window_stride):
     """Build sliding-window (x, y) blocks from a simulation's snapshots.
 
-    snapshots: (N_SNAPSHOTS, 128, 128)
+    snapshots:     (n_frames, 128, 128)
+    window_stride: stride between window start frames (computed dynamically)
 
     Returns:
       x: (N_SAMPLES, 128, 128, T_IN, 7)
@@ -136,7 +140,7 @@ def build_windows(snapshots, nu, mu):
     y_all = np.zeros((N_SAMPLES, H, W, N_OUTPUT_FRAMES), dtype=np.float32)
 
     for sample_idx in range(N_SAMPLES):
-        start = sample_idx * WINDOW_STRIDE  # evenly spaced across full timeline
+        start = sample_idx * window_stride  # evenly spaced across full timeline
 
         # Input: 5 frames spaced INPUT_SPACING apart, starting at `start`
         input_frames = [snapshots[start + k * INPUT_SPACING] for k in range(N_INPUT_CHANNELS)]
@@ -215,8 +219,8 @@ def main():
         if status:
             status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} loading VTK")
 
-        all_snapshots = load_all_snapshots(run_dir)
-        if all_snapshots is None:
+        result = load_all_snapshots(run_dir)
+        if result is None:
             if status:
                 status.set_description_str(f"sim_{sim_id:03d} incomplete, skipped")
             if bar:
@@ -224,10 +228,11 @@ def main():
             n_skipped += 1
             continue
 
+        all_snapshots, window_stride = result
         for field_key, param_name in FIELD_MAP.items():
             if status:
                 status.set_description_str(f"sim_{sim_id:03d} nu={nu:.1e} mu={mu:.1e} {param_name}")
-            x, y = build_windows(all_snapshots[field_key], nu, mu)
+            x, y = build_windows(all_snapshots[field_key], nu, mu, window_stride)
             save_npy(args.output_dir, param_name, split, sim_id, x, y)
 
         if status:

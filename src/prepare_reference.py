@@ -165,7 +165,7 @@ def main():
     )
     parser.add_argument("--split", type=str, default="test",
                         help="Which split to prepare reference files for")
-    parser.add_argument("--n-frames", type=int, default=1000,
+    parser.add_argument("--n-frames", type=int, default=400,
                         help="Number of frames to extract per simulation")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing ref_sim_*.npy files")

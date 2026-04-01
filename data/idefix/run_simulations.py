@@ -103,11 +103,8 @@ def run_simulation(sim_id, nu, mu, split, gpu_id="0"):
               f"Check {log_path}")
         return False
 
-    # Quick sanity check: expect ~1001 VTK files
     vtk_files = list(run_dir.glob("data.????.vtk"))
     print(f"  Done. VTK files produced: {len(vtk_files)}")
-    if len(vtk_files) < 1000:
-        print(f"  WARNING: expected ~1001 VTK files, got {len(vtk_files)}")
 
     return True
 
