@@ -240,6 +240,39 @@ def _mean_squared_magnitude(comp0_traj, comp1_traj):
     return np.mean(comp0_traj ** 2 + comp1_traj ** 2, axis=(1, 2))
 
 
+def _relative_l2_error(ref_mag_traj, pred_mag_traj):
+    """Relative L2 error (%) of magnitude per timestep.
+
+    Returns 100 * ||ref - pred||_2 / ||ref||_2 for each frame.
+    Frames where the reference norm is zero are assigned NaN.
+    """
+    ref = np.asarray(ref_mag_traj, dtype=np.float64)
+    pred = np.asarray(pred_mag_traj, dtype=np.float64)
+    diff_norm = np.sqrt(np.sum((ref - pred) ** 2, axis=(-2, -1)))
+    ref_norm = np.sqrt(np.sum(ref ** 2, axis=(-2, -1)))
+    with np.errstate(invalid='ignore', divide='ignore'):
+        error = np.where(ref_norm > 0, 100.0 * diff_norm / ref_norm, np.nan)
+    return error
+
+
+def _build_error_metric(spec, param, overlap_frames, overlap_ref_mag, overlap_pred_mag):
+    """Build the error-metric panel data dict (relative L2 error in %)."""
+    error_curve = _relative_l2_error(overlap_ref_mag, overlap_pred_mag)
+    x_vals, xlabel = _frames_to_plot_x(param, overlap_frames)
+    magnitude_label = spec['magnitude_label']
+    valid = error_curve[np.isfinite(error_curve)]
+    ylim = _curve_ylim([valid]) if valid.size else None
+    return {
+        'title': f'Relative L2 error of {magnitude_label}',
+        'ylabel': 'Error (%)',
+        'xlabel': xlabel,
+        'frames': overlap_frames,
+        'x': x_vals,
+        'curve': error_curve,
+        'ylim': ylim,
+    }
+
+
 def _timeseries_ylim(curves, log_scale):
     """Return a stable y-limit for linear or log-scaled time-series plots."""
     valid = [np.asarray(curve) for curve in curves if curve is not None]
@@ -369,6 +402,14 @@ def _build_vector_dataset(pair_paths, sim_id, spec):
         pred_comp1,
     )
 
+    error_metric = _build_error_metric(
+        spec,
+        spec['param'],
+        overlap_frames,
+        overlap_ref_mag,
+        overlap_pred_mag,
+    )
+
     return {
         'ref_frames': ref_frames,
         'ref_comp0': ref_comp0,
@@ -381,6 +422,7 @@ def _build_vector_dataset(pair_paths, sim_id, spec):
         'overlap_ref_mag': overlap_ref_mag,
         'overlap_pred_mag': overlap_pred_mag,
         'diagnostic': diagnostic,
+        'error_metric': error_metric,
     }
 
 
@@ -527,6 +569,39 @@ def _plot_diagnostic(ax, frame, diagnostic):
     ax.legend(fontsize=9)
 
 
+def _plot_error_metric(ax, frame, error_metric):
+    """Draw the relative L2 error (%) time series with a moving frame marker."""
+    ax.plot(
+        error_metric['x'],
+        error_metric['curve'],
+        color='mediumseagreen',
+        linewidth=2,
+    )
+
+    matches = np.where(error_metric['frames'] == frame)[0]
+    if matches.size:
+        idx = int(matches[0])
+        ax.plot(
+            error_metric['x'][idx],
+            error_metric['curve'][idx],
+            marker='o',
+            markersize=12,
+            color='red',
+            markeredgecolor='white',
+            markeredgewidth=1.5,
+            linestyle='None',
+            label='Current frame',
+            zorder=5,
+        )
+
+    if error_metric['ylim'] is not None:
+        ax.set_ylim(error_metric['ylim'])
+    ax.set_title(error_metric['title'])
+    ax.set_xlabel(error_metric['xlabel'])
+    ax.set_ylabel(error_metric['ylabel'])
+    ax.grid(True, alpha=0.3, which='both')
+
+
 def _figure_title(spec, sim_id, frame, suffix='', prediction_only=False):
     """Build a consistent figure title."""
     vector_symbol = spec['vector_symbol']
@@ -559,8 +634,9 @@ def _save_frame_with_reference(job):
     ax_ref = fig.add_subplot(gs[0, 0])
     ax_pred = fig.add_subplot(gs[0, 1])
     ax_res = fig.add_subplot(gs[0, 2])
-    ax_spec = fig.add_subplot(gs[1, :2])
-    ax_diag = fig.add_subplot(gs[1, 2])
+    ax_spec = fig.add_subplot(gs[1, 0])
+    ax_diag = fig.add_subplot(gs[1, 1])
+    ax_error = fig.add_subplot(gs[1, 2])
 
     _plot_vector_panel(
         ax_ref,
@@ -600,6 +676,7 @@ def _save_frame_with_reference(job):
         ylim=job['spec_ylim'],
     )
     _plot_diagnostic(ax_diag, job['frame'], job['diagnostic'])
+    _plot_error_metric(ax_error, job['frame'], job['error_metric'])
 
     plt.savefig(vis_dir / job['fname'], dpi=100)
     plt.close(fig)
@@ -624,8 +701,9 @@ def _save_frame_prediction_only(job):
     ax_blank_left = fig.add_subplot(gs[0, 0])
     ax_pred = fig.add_subplot(gs[0, 1])
     ax_blank_right = fig.add_subplot(gs[0, 2])
-    ax_spec = fig.add_subplot(gs[1, :2])
-    ax_diag = fig.add_subplot(gs[1, 2])
+    ax_spec = fig.add_subplot(gs[1, 0])
+    ax_diag = fig.add_subplot(gs[1, 1])
+    ax_error = fig.add_subplot(gs[1, 2])
 
     _plot_vector_panel(
         ax_pred,
@@ -650,6 +728,7 @@ def _save_frame_prediction_only(job):
         ylim=job['spec_ylim'],
     )
     _plot_diagnostic(ax_diag, job['frame'], job['diagnostic'])
+    ax_error.set_visible(False)
 
     plt.savefig(vis_dir / job['fname'], dpi=100)
     plt.close(fig)
@@ -760,6 +839,13 @@ def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
     ref_idx = dataset['ref_index']
     pred_idx = dataset['pred_index']
 
+    # Stable y-limits for the error metric panel across all rendered frames.
+    error_metric = dataset['error_metric']
+    valid_errors = error_metric['curve'][np.isfinite(error_metric['curve'])]
+    error_ylim = _curve_ylim([valid_errors]) if valid_errors.size else None
+    error_metric_stable = dict(error_metric)
+    error_metric_stable['ylim'] = error_ylim
+
     jobs = []
     skipped = 0
     file_prefix = spec['file_prefix']
@@ -786,6 +872,7 @@ def _frame_jobs(dataset, spec, sim_id, vis_dir, force, max_frames,
             'eabs': eabs,
             'spec_ylim': spec_ylim,
             'diagnostic': dataset['diagnostic'],
+            'error_metric': error_metric_stable,
             'quiver_stride': quiver_stride,
             'pred_comp0': pred_comp0,
             'pred_comp1': pred_comp1,
