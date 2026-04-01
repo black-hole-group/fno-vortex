@@ -3,11 +3,21 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
 
-This project implements a 3D Fourier Neural Operator (FNO) surrogate for 2D magnetohydrodynamic (MHD) turbulence. The model is trained on the **Orszag–Tang vortex**, a standard MHD benchmark, simulated with the [FARGO3D](https://fargo3d.bitbucket.io) code across an ensemble of viscosities and magnetic diffusivities. It learns to map a short initial window of simulation frames to future states for physical quantities such as density, velocity, and magnetic field components.
+This project implements a 3D Fourier Neural Operator (FNO) surrogate for
+2D magnetohydrodynamic (MHD) turbulence. The current supported workflow is
+based on **Idefix** simulations of the **Orszag-Tang vortex**, spanning an
+ensemble of viscosities and magnetic diffusivities. The model learns to map
+a short initial window of simulation frames and physical parameters to
+future states for quantities such as density, velocity, and magnetic-field
+components.
 
 ---
-**REPOSITORY UNDER CONSTRUCTION**
-We are working to make this repository useful and inference-ready, including a Docker image and train/test data. For the time being, check out our paper: *Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [arXiv:2507.01388](https://arxiv.org/abs/2507.01388)*.
+**CURRENT STATUS**
+This repository contains working scripts for training, inference, dense
+reference preparation, and scalar/vector visualization. The supported data
+workflow is Idefix-based. Older FARGO3D assets remain only as historical
+context and are not a supported path. A Dockerized environment is not
+currently provided.
 
 ---
 
@@ -47,15 +57,15 @@ The model consists of:
 ### Architecture Details
 
 ```
-Input: (batch, 128, 128, 10, 7)
-       └─ 128×128 spatial grid, 10 temporal frames, 7 channels
+Input: (batch, 128, 128, 20, 7)
+       └─ 128×128 spatial grid, 20 temporal positions, 7 channels
           (5 input snapshots + viscosity ν + diffusivity μ)
   ↓ [Append x/y/t grid coordinates → 10 channels total]
   ↓ [Linear projection (10 → width=30) + permute]
   ↓ [5× Fourier Layer with GELU activation]
   ↓ [Unpad + permute]
   ↓ [Linear projection (30 → 128 → 1)]
-Output: (batch, 128, 128, 10, 1) → next 10 timesteps
+Output: (batch, 128, 128, 20, 1) → next 20 timesteps
 ```
 
 **Key hyperparameters:**
@@ -71,7 +81,7 @@ Output: (batch, 128, 128, 10, 1) → next 10 timesteps
 ```bash
 cd src
 python train.py --param <parameter_name> \
-  [--experiments-dir <path>] [--fast] [--patience N]
+  [--experiments-dir <path>] [--fast] [--batch-size N] [--patience N]
 ```
 
 **Available parameters (Idefix dataset):**
@@ -81,7 +91,16 @@ python train.py --param <parameter_name> \
 - `bx` - Magnetic field (x-component)
 - `by` - Magnetic field (y-component)
 
-*FARGO3D dataset additionally includes `vz`, `bz`, `br`; pass e.g. `--param fargo3d/density`.*
+Short leaf parameters such as `density` or `by` resolve automatically to the
+preferred dataset snapshot under `data/idefix/numpy/t20/`. If you need a
+specific dataset path, pass it explicitly, for example:
+
+```bash
+python train.py --param idefix/numpy/t10/density
+```
+
+The same short-param resolution applies to inference and visualization
+scripts.
 
 **Example:**
 ```bash
@@ -152,7 +171,8 @@ Checkpoints created before the MAE-only refactor are not compatible with `--resu
 
 ```bash
 cd src
-python inference.py --param <parameter_name> [--experiments-dir <path>] [--rollout-steps N]
+python inference.py --param <parameter_name> \
+  [--experiments-dir <path>] [--checkpoint <path>] [--rollout-steps N]
 ```
 
 Processes all discovered test samples and saves denormalized predictions as
@@ -246,41 +266,51 @@ Validation MAE is also used for early stopping and best-checkpoint selection.
 ### Data Loading
 
 - All data cached in memory at startup to avoid repeated disk I/O
-- Train files: 42 | Val files: 6 | Test files: 2 (Idefix dataset, default 50-simulation run)
+- File counts are discovered dynamically from the resolved dataset path
+- Current preferred snapshot `data/idefix/numpy/t20/<param>/` contains
+  37 train, 6 val, and 2 test files per field
 - Training validates against the **val** split; the **test** split is held out for final inference only
 
 ## Data Format
 
 ### Directory Structure
 
+Short params like `density` resolve to the preferred nested path
+`data/idefix/numpy/t20/density/`.
+
 ```
 data/
-├── density/
-│   ├── train/
-│   │   ├── x_sim_002.npy   # Input: 5 frames + ν + μ
-│   │   ├── y_sim_002.npy   # Target: next 20 frames
-│   │   └── ...             # 42 files for default 50-simulation Idefix run
-│   ├── val/
-│   │   ├── x_sim_NNN.npy
-│   │   ├── y_sim_NNN.npy
-│   │   └── ...             # 6 files for default setup
-│   └── test/
-│       ├── x_sim_000.npy
-│       ├── y_sim_001.npy
-│       └── ...             # 2 fixed holdout files
-├── vy/
-├── by/
-└── ...
+├── idefix/
+│   └── numpy/
+│       ├── t20/
+│       │   ├── density/
+│       │   │   ├── train/
+│       │   │   │   ├── x_sim_002.npy   # Input: 5 snapshots + ν + μ
+│       │   │   │   ├── y_sim_002.npy   # Target: next 20 frames
+│       │   │   │   └── ...
+│       │   │   ├── val/
+│       │   │   └── test/
+│       │   ├── vx/
+│       │   ├── vy/
+│       │   ├── bx/
+│       │   └── by/
+│       └── t10/                        # Older legacy snapshot
+└── fargo3d/                            # Historical only; not supported
 ```
 
 ### Array Shapes
 
-- **Input files (`x_*.npy`)**: `(20, 128, 128, 10, 7)`
-  - 20 samples per file, 128×128 spatial grid, 10 temporal frames
+- **Input files (`x_*.npy`)** for the preferred `t20` snapshot:
+  `(20, 128, 128, 20, 7)`
+  - 20 samples per file, 128×128 spatial grid, 20 temporal positions
   - 7 channels: 5 input snapshots + viscosity ν + diffusivity μ
 
-- **Target files (`y_*.npy`)**: `(20, 128, 128, 10)`
-  - 20 samples per file, 128×128 spatial grid, 10 predicted frames
+- **Target files (`y_*.npy`)** for the preferred `t20` snapshot:
+  `(20, 128, 128, 20)`
+  - 20 samples per file, 128×128 spatial grid, 20 predicted frames
+
+The legacy `t10` snapshot uses `10` instead of `20` in the temporal
+dimension, but short params default to `t20`.
 
 ## Configuration
 
@@ -306,8 +336,10 @@ fno/
 │   ├── architecture.py      # FNO3d and SpectralConv3d definitions (used by inference.py)
 │   ├── train.py             # Main training script (also defines FNO3d inline)
 │   ├── inference.py         # Inference script
+│   ├── prepare_reference.py # Dense rollout reference generation from Idefix runs
 │   ├── viz_scalar.py        # Scalar prediction rendering
 │   ├── viz_vector.py        # Vector prediction rendering
+│   ├── unify_legacy_magnetic_run.py # Merge legacy bx/by runs into one run root
 │   ├── utilities.py         # Loss functions: LpLoss, HsLoss, FrequencyLoss
 │   ├── Adam.py              # Custom Adam optimizer
 │   └── experiment_layout.py # Shared legacy/run-scoped path resolver
