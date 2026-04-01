@@ -10,4 +10,4 @@
 	- [x] code for generating train/test data with idefix
 	- [x] conversion script to pytorch format
 	- [ ] Docker image
-- [ ] implement autoregressive rollout that feeds predicted frames back as inputs 
+- [x] implement autoregressive rollout that feeds predicted frames back as inputs
