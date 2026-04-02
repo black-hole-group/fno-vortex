@@ -350,3 +350,5 @@ fno/
 
 - Duarte, Nemmen & Lima-Santos (2025). Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [*arXiv:2507.01388*](https://arxiv.org/abs/2507.01388)
 - Li et al. (2020). Fourier Neural Operator for Parametric Partial Differential Equations. [*arXiv:2010.08895*](https://arxiv.org/abs/2010.08895)
+
+Duarte et al. implements the legacy version of this codebase: FARGO3D training data, teacher-forced inference (inflates prediction performance), inefficient training among other issues.
