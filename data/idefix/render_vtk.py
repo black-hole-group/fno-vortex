@@ -19,10 +19,12 @@ Requires:
 """
 
 import argparse
+import multiprocessing
 import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -119,7 +121,7 @@ def render_frame(vtk_path: Path, out_path: Path, clims: dict | None,
     bxq, byq = bx[::s, ::s], by[::s, ::s]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="constrained")
-    fig.suptitle(f"t = {float(V.t):.3f}", fontsize=11)
+    fig.suptitle(f"t = {float(np.asarray(V.t).flat[0]):.3f}", fontsize=11)
 
     # Panel 1: density
     ax = axes[0]
@@ -189,6 +191,9 @@ def main():
                         help="Output movie path (default: <sim_dir>/movie.mp4)")
     parser.add_argument("--per-frame", action="store_true",
                         help="Per-frame linear normalization instead of log scale")
+    parser.add_argument("--workers", type=int, default=None, metavar="N",
+                        help="Number of worker processes for parallel rendering. "
+                             "Defaults to serial. Use e.g. --workers 8 to saturate CPU cores.")
     args = parser.parse_args()
 
     sim_dir = Path(args.sim_dir).resolve()
@@ -209,14 +214,27 @@ def main():
         clims = compute_clims(vtk_files)
         print("Colorscale: global SymLogNorm (use --per-frame for linear per-frame)")
 
+    jobs = [
+        (vtk, frames_dir / f"frame_{i:04d}.png", clims, args.per_frame)
+        for i, vtk in enumerate(vtk_files)
+    ]
+    frame_paths = [out for _, out, _, _ in jobs]
+
     print(f"Rendering frames to {frames_dir}/")
-    frame_paths = []
-    with tqdm(vtk_files, unit="frame", desc="rendering") as pbar:
-        for i, vtk in enumerate(pbar):
-            out = frames_dir / f"frame_{i:04d}.png"
-            pbar.set_postfix_str(f"{vtk.name} → {out.name}")
-            render_frame(vtk, out, clims, per_frame=args.per_frame)
-            frame_paths.append(out)
+    if args.workers and args.workers > 1:
+        print(f"Parallel rendering: {args.workers} worker processes")
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=args.workers, mp_context=ctx) as pool:
+            futures = {pool.submit(render_frame, vtk, out, clims, pf): out
+                       for vtk, out, clims, pf in jobs}
+            with tqdm(total=len(futures), unit="frame", desc="rendering") as pbar:
+                for _ in as_completed(futures):
+                    pbar.update(1)
+    else:
+        with tqdm(jobs, unit="frame", desc="rendering") as pbar:
+            for vtk, out, clims, pf in pbar:
+                pbar.set_postfix_str(f"{vtk.name} → {out.name}")
+                render_frame(vtk, out, clims, per_frame=pf)
 
     out_movie = Path(args.output) if args.output else sim_dir / "movie.mp4"
     print(f"\nAssembling {len(frame_paths)} frames → {out_movie}")
