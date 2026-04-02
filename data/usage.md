@@ -48,7 +48,8 @@ Each simulation runs in its own directory under `runs/sim_XXX/` and produces 100
 ## Step 4 — Convert VTK output to `.npy`
 
 ```bash
-python convert_to_npy.py --output-dir ../../data
+cd data/idefix
+python convert_to_npy.py --runs-dir runs --output-dir numpy
 ```
 
 Produces files for each physical field (`density`, `vx`, `vy`, `bx`, `by`):
