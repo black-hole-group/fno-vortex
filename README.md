@@ -5,12 +5,6 @@
 
 This project implements a 3D Fourier Neural Operator (FNO) surrogate for 2D magnetohydrodynamic (MHD) turbulence. The model is trained on the **Orszag–Tang vortex**, a standard MHD benchmark, simulated with the [FARGO3D](https://fargo3d.bitbucket.io) code across an ensemble of viscosities and magnetic diffusivities. It learns to map a short initial window of simulation frames to future states for physical quantities such as density, velocity, and magnetic field components.
 
----
-**REPOSITORY UNDER CONSTRUCTION**
-We are working to make this repository useful and inference-ready, including a Docker image and train/test data. For the time being, check out our paper: *Spectral Learning of Magnetized Plasma Dynamics: A Neural Operator Application. [arXiv:2507.01388](https://arxiv.org/abs/2507.01388)*.
-
----
-
 ![Demo](https://github.com/rsnemmen/rsnemmen.github.io/blob/ea3fb56c0b4aff19ea168753a924d4d59114f2b4/assets/video/magfield.webp)
 **Figure 1:** Comparison between ground truth simulated data of MHD vortex (*left panel*) and FNO prediction (*center*) using this codebase including residuals (*right panel*). Colors indicate the magnetic field strength. Time in units of the Alfven time for the computational box.
 
@@ -47,6 +41,13 @@ pip install numpy matplotlib scipy
 # Verify PyTorch CUDA availability
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
+
+## Data & Model Weights
+
+- **Training and test data** (FARGO3D simulations): [https://doi.org/10.6084/m9.figshare.31920281](https://doi.org/10.6084/m9.figshare.31920281)
+- **Pretrained model weights**: [https://doi.org/10.6084/m9.figshare.31920230](https://doi.org/10.6084/m9.figshare.31920230)
+
+Download the data and place it under `input_data/`, and the model checkpoints under `experiments/<param>/checkpoints/`.
 
 ## Model Architecture
 
